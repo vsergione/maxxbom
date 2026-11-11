@@ -20,8 +20,8 @@ module Logimaxx
         Logimaxx::MaxxBOM::UI.show(:export_bom)
       end
 
-      def self.attributes
-        Logimaxx::MaxxBOM::UI.show(:attributes)
+      def self.rules
+        Logimaxx::MaxxBOM::UI.show(:rules)
       end
 
       def self.settings
@@ -37,8 +37,8 @@ module Logimaxx
           Logimaxx::MaxxBOM::Commands.reload_dev
         end
         cmd.tooltip = 'Reload extension (dev only)'
-        cmd.small_icon = File.join(ROOT, "icons","reload.png")
-        cmd.large_icon = File.join(ROOT, "icons","reload.png")
+        cmd.small_icon = File.join(ROOT, "icons","reload_16x16.png")
+        cmd.large_icon = File.join(ROOT, "icons","reload_24x24.png")
         cmd.menu_text = "Reload (Dev)"
         cmd
       end
@@ -48,22 +48,22 @@ module Logimaxx
           Logimaxx::MaxxBOM::Commands.export_bom
         end
         cmd.tooltip = 'Export Bill of Materials'
-        cmd.small_icon = File.join(ROOT, "icons","export.png")
-        cmd.large_icon = File.join(ROOT, "icons","export.png")
+        cmd.small_icon = File.join(ROOT, "icons","export_16x16.png")
+        cmd.large_icon = File.join(ROOT, "icons","export_24x24.png")
         cmd.menu_text = "Export BOM"
         # Omit small_icon/large_icon unless you have paths; SketchUp does not accept nil.
         cmd
       end
 
 
-      def self.attributes_command
-        cmd = ::UI::Command.new('Attributes') do
-          Logimaxx::MaxxBOM::Commands.attributes
+      def self.rules_command
+        cmd = ::UI::Command.new('Rules') do
+          Logimaxx::MaxxBOM::Commands.rules
         end
-        cmd.tooltip = 'Edit attributes'
-        cmd.small_icon = File.join(ROOT, "icons","attributes.png")
-        cmd.large_icon = File.join(ROOT, "icons","attributes.png")
-        cmd.menu_text = "Attributes"
+        cmd.tooltip = 'Edit rules'
+        cmd.small_icon = File.join(ROOT, "icons","rules_16x16.png")
+        cmd.large_icon = File.join(ROOT, "icons","rules_24x24.png")
+        cmd.menu_text = "Rules"
         cmd
       end
 
@@ -72,8 +72,8 @@ module Logimaxx
           Logimaxx::MaxxBOM::Commands.settings
         end
         cmd.tooltip = 'Plugin settings (API URL, etc.)'
-        cmd.small_icon = File.join(ROOT, "icons", "setting.png")
-        cmd.large_icon = File.join(ROOT, "icons", "setting.png")
+        cmd.small_icon = File.join(ROOT, "icons", "settings_16x16.png")
+        cmd.large_icon = File.join(ROOT, "icons", "settings_24x24.png")
         cmd.menu_text = "Settings"
         cmd
       end

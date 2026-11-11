@@ -1,0 +1,50 @@
+{
+  "id": "csv",
+  "name": "CSV catalog",
+  "version": "1.0.0",
+  "description": "Looks up products in a local CSV file. Offer import and export stay on an API data source.",
+  "script": "adapter.js",
+  "actions": ["catalog.search"],
+  "settings": [
+    {
+      "key": "path",
+      "label": "CSV file",
+      "type": "file",
+      "hint": "The first row is the header. Code is required before this data source can search.",
+      "required_for": ["catalog.search"]
+    },
+    {
+      "key": "code",
+      "label": "Code",
+      "type": "column",
+      "headers_from": "path",
+      "required_for": ["catalog.search"]
+    },
+    {
+      "key": "name",
+      "label": "Name",
+      "type": "column",
+      "headers_from": "path"
+    },
+    {
+      "key": "unit",
+      "label": "Unit",
+      "type": "column",
+      "headers_from": "path"
+    },
+    {
+      "key": "category",
+      "label": "Category",
+      "type": "column",
+      "headers_from": "path",
+      "hint": "When no column is chosen, the quantity export leaves category out and totals by code and unit."
+    },
+    {
+      "key": "price",
+      "label": "Unit price",
+      "type": "column",
+      "headers_from": "path",
+      "hint": "When a column is chosen, the quantity export adds this price and the total for each material."
+    }
+  ]
+}

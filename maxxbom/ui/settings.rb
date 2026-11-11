@@ -1,8 +1,9 @@
 # ui/settings.rb — Plugin settings dialog
 # ------------------------------------------------------------------------------
 # Persists settings via Sketchup.write_default / read_default (local machine).
-# API connections come from adapter plugins loaded in this dialog (see adapters.rb).
-# Older FileMaker URL and key preferences are read once, when that plugin is loaded.
+# API and CSV connections are data sources: named instances of an installed
+# adapter (see datasources.rb). Older FileMaker URL and key preferences are
+# read once, when that plugin is loaded.
 # ------------------------------------------------------------------------------
 require "base64"
 
@@ -17,14 +18,27 @@ module Logimaxx
         PREF_KEY_IMPORT_API_KEY = "import_api_key".freeze
         PREF_KEY_CATALOG_API_URL = "catalog_api_url".freeze
         PREF_KEY_CATALOG_API_KEY = "catalog_api_key".freeze
-        PREF_KEY_CATALOG_VALIDATE_CODES = "catalog_validate_codes".freeze
         PREF_KEY_CATALOG_SOURCE = "catalog_source".freeze
         PREF_KEY_FREE_EDIT_MODE = "free_edit_mode".freeze
+        PREF_KEY_DEBUG_FACILITY = "debug_facility".freeze
         PREF_KEY_UNIT_MAP = "unit_map".freeze
         PREF_KEY_QUOTATION_LENGTH_UNIT = "quotation_length_unit".freeze
         PREF_KEY_CATALOG_CSV_PATH = "catalog_csv_path".freeze
         PREF_KEY_CATALOG_CSV_FIELDS = "catalog_csv_fields".freeze
-        PLUGIN_UOMS = %w[pcs m2 mtr m3 custom].freeze
+        PLUGIN_UOMS = %w[pcs area length volume custom].freeze
+        # Rules saved before quantity kinds. First match wins; "mtr" precedes "m".
+        LEGACY_UOM_KEYS = {
+          "area" => %w[m2],
+          "length" => %w[mtr m],
+          "volume" => %w[m3]
+        }.freeze
+        QUANTITY_LABELS = {
+          "pcs" => "Pieces",
+          "area" => "Area",
+          "length" => "Length",
+          "volume" => "Volume",
+          "custom" => "Custom"
+        }.freeze
         QUOTATION_LENGTH_UNITS = %w[m cm mm ft in].freeze
         DEFAULT_QUOTATION_LENGTH_UNIT = "m".freeze
         # Inches (SketchUp internal length) → one quotation length unit.
@@ -37,13 +51,42 @@ module Logimaxx
         }.freeze
         # Written on export for area / length / volume when the name is still a standard one.
         QUOTATION_EXPORT_NAMES = {
-          "m" => { "m2" => "m2", "mtr" => "mtr", "m3" => "m3" },
-          "cm" => { "m2" => "cm2", "mtr" => "cm", "m3" => "cm3" },
-          "mm" => { "m2" => "mm2", "mtr" => "mm", "m3" => "mm3" },
-          "ft" => { "m2" => "ft2", "mtr" => "ft", "m3" => "ft3" },
-          "in" => { "m2" => "in2", "mtr" => "in", "m3" => "in3" }
+          "m" => { "area" => "m2", "length" => "mtr", "volume" => "m3" },
+          "cm" => { "area" => "cm2", "length" => "cm", "volume" => "cm3" },
+          "mm" => { "area" => "mm2", "length" => "mm", "volume" => "mm3" },
+          "ft" => { "area" => "ft2", "length" => "ft", "volume" => "ft3" },
+          "in" => { "area" => "in2", "length" => "in", "volume" => "in3" }
         }.freeze
-        CSV_PRODUCT_FIELDS = %w[code name unit category].freeze
+        # Extra catalog names. The export name is accepted on its own.
+        # The meter list is the historical default, so an untouched map still matches it.
+        QUOTATION_ACCEPT = {
+          "m" => {
+            "area" => ["m²"],
+            "length" => ["mtr.", "m", "meter", "meters", "linear meter"],
+            "volume" => ["m³", "m3.", "cubic meter", "cubic meters"]
+          },
+          "cm" => {
+            "area" => ["cm²"],
+            "length" => ["centimeter", "centimeters"],
+            "volume" => ["cm³", "cubic centimeter", "cubic centimeters"]
+          },
+          "mm" => {
+            "area" => ["mm²"],
+            "length" => ["millimeter", "millimeters"],
+            "volume" => ["mm³", "cubic millimeter", "cubic millimeters"]
+          },
+          "ft" => {
+            "area" => ["ft²", "sq ft", "sqft", "square foot", "square feet"],
+            "length" => ["lf", "foot", "feet", "linear ft", "linear feet"],
+            "volume" => ["ft³", "cu ft", "cuft", "cubic foot", "cubic feet"]
+          },
+          "in" => {
+            "area" => ["in²", "sq in", "sqin", "square inch", "square inches"],
+            "length" => ["inch", "inches"],
+            "volume" => ["in³", "cu in", "cuin", "cubic inch", "cubic inches"]
+          }
+        }.freeze
+        CSV_PRODUCT_FIELDS = %w[code name unit category price].freeze
         CATALOG_SOURCE_API = "api".freeze
         CATALOG_SOURCE_CSV = "csv".freeze
 
@@ -59,73 +102,172 @@ module Logimaxx
           dialog.add_action_callback('get_settings') { |*_| on_get_settings(dialog) }
           dialog.add_action_callback('save_settings') { |_ctx, b64_str| on_save_settings(dialog, b64_str) }
           dialog.add_action_callback('load_api_adapter') { |*_| on_load_api_adapter(dialog) }
-          dialog.add_action_callback('remove_api_adapter') { |_ctx, adapter_id| on_remove_api_adapter(dialog, adapter_id) }
-          dialog.add_action_callback('pick_catalog_csv') { |*_| on_pick_catalog_csv(dialog) }
-          dialog.add_action_callback('preview_catalog_csv') { |_ctx, path| on_preview_catalog_csv(dialog, path) }
+          dialog.add_action_callback('load_bundled_api_adapter') { |*args| on_load_bundled_api_adapter(dialog, args) }
+          dialog.add_action_callback('remove_api_adapter') { |*args| on_remove_api_adapter(dialog, args) }
+          dialog.add_action_callback('add_data_source') { |_ctx, payload| on_add_data_source(dialog, payload) }
+          dialog.add_action_callback('remove_data_source') { |*args| on_remove_data_source(dialog, args) }
+          dialog.add_action_callback('pick_datasource_file') { |*args| on_pick_datasource_file(dialog, args) }
           dialog.add_action_callback('close_dialog') { dialog.close }
         end
 
         def self.on_get_settings(dialog)
-          csv_status = csv_header_status(resolved_catalog_csv_path)
-          Logimaxx::MaxxBOM::UI.inject_json(dialog, "onSettingsLoaded", adapters_dialog_state.merge(
-            catalog_validate_codes: stored_catalog_validate_codes,
-            catalog_source: stored_catalog_source,
+          Logimaxx::MaxxBOM::UI.inject_json(dialog, "onSettingsLoaded", dialog_state.merge(
             free_edit_mode: stored_free_edit_mode,
+            dev_mode: Logimaxx::MaxxBOM.dev_mode?,
+            debug_facility: stored_debug_facility,
             unit_map: stored_unit_map,
-            quotation_length_unit: stored_quotation_length_unit,
-            catalog_csv_path: stored_catalog_csv_path,
-            catalog_csv_fields: stored_catalog_csv_fields,
-            catalog_csv_headers: csv_status[:headers],
-            catalog_csv_header_error: csv_status[:error]
+            quotation_length_unit: stored_quotation_length_unit
           ))
+        rescue StandardError => e
+          report_adapter_error(dialog, e)
         end
 
+        # File dialogs and message boxes must not run inside an HtmlDialog callback.
+        # execute_script right after openpanel is also dropped, so UI updates wait
+        # for a second timer once the file dialog has closed.
         def self.on_load_api_adapter(dialog)
-          path = Adapters.pick_path
-          return if path.nil? || path.to_s.strip.empty?
-          manifest = Adapters.install(path)
-          deliver_adapters(dialog, {
-            loaded_id: manifest["id"],
-            message: "#{manifest["name"]} loaded."
-          })
-        rescue StandardError => e
-          Logimaxx::MaxxBOM::UI.inject_json(dialog, "onAdaptersChanged", { error: true, message: e.message })
+          ::UI.start_timer(0, false) do
+            begin
+              path = Adapters.pick_path
+              if path.nil? || path.to_s.strip.empty?
+                post_to_dialog(dialog) { deliver_adapters(dialog, { cancelled: true }) }
+                next
+              end
+              manifest = Adapters.install(path)
+              post_to_dialog(dialog) do
+                deliver_adapters(dialog, {
+                  loaded_id: manifest["id"],
+                  message: "#{manifest["name"]} loaded."
+                })
+              end
+            rescue StandardError => e
+              report_adapter_error(dialog, e)
+            end
+          end
+          nil
         end
 
-        def self.on_remove_api_adapter(dialog, adapter_id)
-          adapter_id = adapter_id[0] if adapter_id.is_a?(Array)
-          removed = Adapters.remove(adapter_id)
-          deliver_adapters(dialog, { removed_id: removed, message: "Adapter removed." })
-        rescue StandardError => e
-          Logimaxx::MaxxBOM::UI.inject_json(dialog, "onAdaptersChanged", { error: true, message: e.message })
+        def self.on_load_bundled_api_adapter(dialog, args)
+          adapter_id = callback_string(args)
+          ::UI.start_timer(0, false) do
+            begin
+              raise ArgumentError, "Missing adapter id." if adapter_id.empty?
+              manifest = Adapters.install_discovered(adapter_id)
+              deliver_adapters(dialog, {
+                loaded_id: manifest["id"],
+                message: "#{manifest["name"]} loaded."
+              })
+            rescue StandardError => e
+              report_adapter_error(dialog, e)
+            end
+          end
+          nil
+        end
+
+        def self.on_remove_api_adapter(dialog, args)
+          adapter_id = callback_string(args)
+          ::UI.start_timer(0, false) do
+            begin
+              raise ArgumentError, "Missing adapter id." if adapter_id.empty?
+              removed = Adapters.remove(adapter_id)
+              DataSources.drop_adapter(adapter_id)
+              deliver_adapters(dialog, { removed_id: removed, message: "Adapter removed." })
+            rescue StandardError => e
+              report_adapter_error(dialog, e)
+            end
+          end
+          nil
+        end
+
+        # SketchUp passes the dialog context plus the JS arguments. Older builds
+        # pass only the JS arguments. Keep the first plain string.
+        def self.callback_string(args)
+          Array(args).flatten.each do |value|
+            next if value.nil?
+            text = value.to_s.strip
+            next if text.empty? || text.start_with?("#<") || text.include?("HtmlDialog")
+            return text.gsub(/\A["']|["']\z/, "")
+          end
+          ""
+        end
+
+        def self.post_to_dialog(dialog)
+          ::UI.start_timer(0, false) { yield }
         end
 
         def self.deliver_adapters(dialog, extra)
-          Logimaxx::MaxxBOM::UI.inject_json(dialog, "onAdaptersChanged", adapters_dialog_state.merge(extra))
+          Logimaxx::MaxxBOM::UI.inject_json(dialog, "onAdaptersChanged", dialog_state.merge(extra))
+          BOMExporter.push_adapter_state
+          push_catalog_to_open_rules
         end
 
-        def self.adapters_dialog_state
-          Adapters.ui_state.merge(legacy_filemaker_pending: legacy_filemaker_pending?)
+        def self.report_adapter_error(dialog, error)
+          message = error.message.to_s
+          detail = Array(error.backtrace).first(8).join("\n")
+          puts "[#{Logimaxx::MaxxBOM::DISPLAY_NAME}] #{message}\n#{detail}"
+          post_to_dialog(dialog) do
+            begin
+              Logimaxx::MaxxBOM::UI.inject_json(dialog, "onAdaptersChanged", { error: true, message: message })
+            rescue StandardError
+              nil
+            end
+            ::UI.messagebox("#{Logimaxx::MaxxBOM::DISPLAY_NAME}\n\n#{message}")
+          end
         end
 
-        def self.on_pick_catalog_csv(dialog)
-          path = ::UI.openpanel("Select catalog CSV", "", "CSV|*.csv||")
-          return if path.nil? || path.to_s.strip.empty?
-          deliver_csv_preview(dialog, path.to_s.strip)
+        def self.dialog_state
+          DataSources.ui_state.merge(legacy_filemaker_pending: legacy_filemaker_pending?)
         end
 
-        def self.on_preview_catalog_csv(dialog, path)
-          path = path[0] if path.is_a?(Array)
-          deliver_csv_preview(dialog, path.to_s.strip)
+        def self.on_add_data_source(dialog, raw)
+          raw = raw.is_a?(Array) ? (raw[0] || raw) : raw
+          data = JSON.parse(Base64.strict_decode64(raw.to_s.strip))
+          ds = DataSources.create(data["name"] || data[:name], data["adapter_id"] || data[:adapter_id])
+          deliver_adapters(dialog, { added_id: ds["id"], message: "#{ds["name"]} added." })
+        rescue StandardError => e
+          report_adapter_error(dialog, e)
         end
 
-        def self.deliver_csv_preview(dialog, stored_path)
-          status = csv_header_status(stored_path)
-          Logimaxx::MaxxBOM::UI.inject_json(dialog, "onCatalogCsvPicked", {
-            path: stored_path,
-            headers: status[:headers],
-            error: status[:error]
-          })
+        def self.on_remove_data_source(dialog, args)
+          id = callback_string(args)
+          ::UI.start_timer(0, false) do
+            begin
+              raise ArgumentError, "Missing data source." if id.empty?
+              DataSources.remove(id)
+              deliver_adapters(dialog, { removed_datasource_id: id, message: "Data source removed." })
+            rescue StandardError => e
+              report_adapter_error(dialog, e)
+            end
+          end
+          nil
+        end
+
+        def self.on_pick_datasource_file(dialog, args)
+          encoded = callback_string(args)
+          ::UI.start_timer(0, false) do
+            begin
+              spec = JSON.parse(Base64.strict_decode64(encoded))
+              id = (spec["id"] || spec[:id]).to_s
+              key = (spec["key"] || spec[:key]).to_s
+              path = ::UI.openpanel("Select file", "", "CSV|*.csv||")
+              path = path.first if path.is_a?(Array)
+              next if path.nil? || path.to_s.strip.empty?
+              stored = normalize_catalog_csv_path(path)
+              status = csv_header_status(stored)
+              post_to_dialog(dialog) do
+                Logimaxx::MaxxBOM::UI.inject_json(dialog, "onDatasourceFilePicked", {
+                  id: id,
+                  key: key,
+                  path: stored,
+                  headers: status[:headers],
+                  error: status[:error]
+                })
+              end
+            rescue StandardError => e
+              report_adapter_error(dialog, e)
+            end
+          end
+          nil
         end
 
         def self.on_save_settings(dialog, b64_str)
@@ -143,60 +285,40 @@ module Logimaxx
             Logimaxx::MaxxBOM::UI.inject_json(dialog, "onSettingsSaved", { error: true, message: "Invalid data: #{e.message}" })
             return
           end
-          val = data["catalog_validate_codes"] || data[:catalog_validate_codes]
-          catalog_validate_codes = val
-          raw_source = (data["catalog_source"] || data[:catalog_source] || CATALOG_SOURCE_API).to_s.strip.downcase
-          catalog_source = (raw_source == CATALOG_SOURCE_CSV) ? CATALOG_SOURCE_CSV : CATALOG_SOURCE_API
           free_edit_val = data.key?("free_edit_mode") ? data["free_edit_mode"] : data[:free_edit_mode]
           free_edit_mode = (free_edit_val == true || free_edit_val.to_s.downcase == "true")
-          csv_path = if data.key?("catalog_csv_path") || data.key?(:catalog_csv_path)
-            (data["catalog_csv_path"] || data[:catalog_csv_path]).to_s.strip
-          else
-            stored_catalog_csv_path
+          debug_facility = nil
+          if data.key?("debug_facility") || data.key?(:debug_facility)
+            debug_val = data.key?("debug_facility") ? data["debug_facility"] : data[:debug_facility]
+            debug_facility = (debug_val == true || debug_val.to_s.downcase == "true")
           end
           begin
             raw_unit = data.key?("quotation_length_unit") ? data["quotation_length_unit"] : data[:quotation_length_unit]
             quotation_length_unit = raw_unit.nil? ? stored_quotation_length_unit : normalize_quotation_length_unit(raw_unit)
             unit_map_value = data.key?("unit_map") ? data["unit_map"] : data[:unit_map]
             mapped_units = unit_map_value.nil? ? stored_unit_map : normalize_unit_map(unit_map_value)
-            mapped_units = apply_quotation_export_names(mapped_units, quotation_length_unit)
-            unit_map = JSON.generate(normalize_unit_map(mapped_units))
-            csv_fields_value = data.key?("catalog_csv_fields") ? data["catalog_csv_fields"] : data[:catalog_csv_fields]
-            csv_fields_hash = csv_fields_value.nil? ? stored_catalog_csv_fields : normalize_catalog_csv_fields(csv_fields_value)
-            if catalog_source == CATALOG_SOURCE_CSV && csv_fields_hash["code"].to_s.strip.empty?
-              raise ArgumentError, "Choose the CSV column for the product code."
-            end
-            csv_fields = JSON.generate(csv_fields_hash)
-            if data.key?("api_adapter_values") || data.key?(:api_adapter_values)
-              Adapters.save_values(data["api_adapter_values"] || data[:api_adapter_values])
-            end
-            if data.key?("active_api_adapter") || data.key?(:active_api_adapter)
-              Adapters.set_active(data["active_api_adapter"] || data[:active_api_adapter])
-            end
+            mapped_units = apply_quotation_names(mapped_units, quotation_length_unit)
+            unit_map = encode_pref_json(normalize_unit_map(mapped_units))
+            source_values = data.key?("data_source_values") ? data["data_source_values"] : data[:data_source_values]
+            catalog_role = data.key?("catalog_data_source") ? data["catalog_data_source"] : data[:catalog_data_source]
+            DataSources.apply_form(source_values, catalog_role, enforce_required: !free_edit_mode)
           rescue StandardError => e
             Logimaxx::MaxxBOM::UI.inject_json(dialog, "onSettingsSaved", { error: true, message: "Invalid settings: #{e.message}" })
             return
           end
           begin
-            Sketchup.write_default(PREF_NAMESPACE, PREF_KEY_CATALOG_VALIDATE_CODES, catalog_validate_codes ? "true" : "false")
-            Sketchup.write_default(PREF_NAMESPACE, PREF_KEY_CATALOG_SOURCE, catalog_source)
-            Sketchup.write_default(PREF_NAMESPACE, PREF_KEY_FREE_EDIT_MODE, free_edit_mode ? "true" : "false")
-            Sketchup.write_default(PREF_NAMESPACE, PREF_KEY_UNIT_MAP, unit_map)
+            write_free_edit_mode(free_edit_mode)
+            if !debug_facility.nil? && Logimaxx::MaxxBOM.dev_mode?
+              Sketchup.write_default(PREF_NAMESPACE, PREF_KEY_DEBUG_FACILITY, debug_facility ? "true" : "false")
+            end
+            write_pref_string(PREF_KEY_UNIT_MAP, unit_map)
             Sketchup.write_default(PREF_NAMESPACE, PREF_KEY_QUOTATION_LENGTH_UNIT, quotation_length_unit)
-            Sketchup.write_default(PREF_NAMESPACE, PREF_KEY_CATALOG_CSV_PATH, csv_path)
-            Sketchup.write_default(PREF_NAMESPACE, PREF_KEY_CATALOG_CSV_FIELDS, csv_fields)
             Logimaxx::MaxxBOM::UI.inject_json(dialog, "onSettingsSaved", {})
+            push_catalog_to_open_rules
+            BOMExporter.push_adapter_state
           rescue StandardError => e
             Logimaxx::MaxxBOM::UI.inject_json(dialog, "onSettingsSaved", { error: true, message: e.message })
           end
-        end
-
-        def self.stored_import_api_url
-          Adapters.connection[:import_url].to_s
-        end
-
-        def self.stored_offer_lines_api_url
-          Adapters.connection[:offer_lines_url].to_s
         end
 
         # Values written by builds that stored the FileMaker connection in the extension.
@@ -241,38 +363,11 @@ module Logimaxx
           url.sub("import-sketch", "get-offer-lines")
         end
 
-        def self.stored_import_api_key
-          Adapters.connection[:api_key].to_s
-        end
-
-        def self.stored_catalog_api_url
-          Adapters.connection[:catalog_url].to_s
-        end
-
-        def self.stored_catalog_api_key
-          Adapters.connection[:api_key].to_s
-        end
-
         def self.stored_api_adapter_name
-          Adapters.connection[:name].to_s
+          DataSources.role_name(:orders)
         end
 
-        def self.stored_catalog_api_profile
-          Adapters.connection[:catalog_profile]
-        end
-
-        def self.stored_import_api_profile
-          Adapters.connection[:orders_profile]
-        end
-
-        # Default true: validate product codes against catalog API on blur.
-        def self.stored_catalog_validate_codes
-          v = Sketchup.read_default(PREF_NAMESPACE, PREF_KEY_CATALOG_VALIDATE_CODES)
-          return true if v.nil?
-          v.to_s.downcase != "false"
-        end
-
-        # "api" uses the active adapter. "csv" reads the catalog file. Orders stay on the adapter.
+        # Read once, when data sources are created from an older settings file.
         # An unset choice stays on the API when an older FileMaker connection or a loaded adapter exists.
         def self.stored_catalog_source
           v = Sketchup.read_default(PREF_NAMESPACE, PREF_KEY_CATALOG_SOURCE).to_s.strip.downcase
@@ -286,8 +381,63 @@ module Logimaxx
           Sketchup.read_default(PREF_NAMESPACE, PREF_KEY_FREE_EDIT_MODE).to_s.downcase == "true"
         end
 
+        def self.write_free_edit_mode(value)
+          Sketchup.write_default(PREF_NAMESPACE, PREF_KEY_FREE_EDIT_MODE, value ? "true" : "false")
+        end
+
+        # Debug docks on the rules window and the export dialog.
+        # Shown only while the extension is loaded from a checkout. Default on.
+        def self.stored_debug_facility
+          v = Sketchup.read_default(PREF_NAMESPACE, PREF_KEY_DEBUG_FACILITY)
+          return true if v.nil? || v.to_s.strip.empty?
+          v.to_s.downcase != "false"
+        end
+
+        def self.debug_facility_visible?
+          Logimaxx::MaxxBOM.dev_mode? && stored_debug_facility
+        end
+
+        # SketchUp.read_default evals the stored string. A Windows path such as
+        # C:\Users\...\catalog.csv is then read as escapes: \c becomes a control
+        # character and the file is reported missing. Forward slashes survive
+        # that eval, and Windows opens them.
+        def self.normalize_catalog_csv_path(path)
+          path.to_s.strip.delete("\0").tr("\\", "/")
+        end
+
+        # True when read_default already ate the backslashes (control characters,
+        # or a drive letter no longer followed by a separator).
+        def self.catalog_csv_path_damaged?(path)
+          text = normalize_catalog_csv_path(path)
+          return false if text.empty?
+          return true if text.match?(/[\x00-\x1f\x7f]/)
+          text.match?(/\A[A-Za-z]:[^\/]/)
+        end
+
+        # A raw path from an older build is still accepted. New saves store
+        # {"path":...} as Base64. SketchUp.write_default refuses an empty string
+        # and leaves the previous file in place, so a cleared path has to be a
+        # non-empty payload that reads back as blank.
         def self.stored_catalog_csv_path
-          Sketchup.read_default(PREF_NAMESPACE, PREF_KEY_CATALOG_CSV_PATH).to_s.strip
+          raw = read_pref(PREF_KEY_CATALOG_CSV_PATH)
+          decoded = decode_pref_json(raw)
+          if decoded.is_a?(Hash) && (decoded.key?("path") || decoded.key?(:path))
+            return normalize_catalog_csv_path(decoded["path"] || decoded[:path])
+          end
+          normalize_catalog_csv_path(raw)
+        rescue ScriptError
+          ""
+        end
+
+        def self.write_catalog_csv_path(path)
+          write_pref_string(PREF_KEY_CATALOG_CSV_PATH, encode_pref_json({ "path" => path.to_s }))
+        end
+
+        def self.push_catalog_to_open_rules
+          rules = Logimaxx::MaxxBOM.dialogs[:rules]
+          Rules.on_get_catalog_settings(rules) if rules
+        rescue StandardError
+          nil
         end
 
         def self.resolved_catalog_csv_path
@@ -310,22 +460,26 @@ module Logimaxx
         end
 
         def self.stored_catalog_csv_fields
-          raw = Sketchup.read_default(PREF_NAMESPACE, PREF_KEY_CATALOG_CSV_FIELDS)
-          return empty_catalog_csv_fields if raw.nil? || raw.to_s.strip.empty?
-          normalize_catalog_csv_fields(raw)
+          parsed = decode_pref_json(read_pref(PREF_KEY_CATALOG_CSV_FIELDS))
+          return empty_catalog_csv_fields if parsed.nil?
+          normalize_catalog_csv_fields(parsed)
         rescue StandardError
           empty_catalog_csv_fields
         end
 
-        # { headers:, error: } for the first row. error is "missing", "invalid", or nil.
+        # { headers:, error: } for the first row.
+        # error is "damaged", "missing", "invalid", or nil.
         def self.csv_header_status(path)
-          path = path.to_s.strip
+          path = normalize_catalog_csv_path(path)
           return { headers: [], error: nil } if path.empty?
+          if catalog_csv_path_damaged?(path)
+            return { headers: [], error: "damaged" }
+          end
           unless File.file?(path)
             return { headers: [], error: "missing" }
           end
           raw = File.read(path).sub(/\A\xEF\xBB\xBF/, "")
-          rows = Attributes.parse_csv(raw)
+          rows = Rules.parse_csv(raw)
           headers = []
           seen = {}
           (rows.shift || []).each do |header|
@@ -356,15 +510,53 @@ module Logimaxx
           QUOTATION_LENGTH_FACTORS[key]
         end
 
-        # Replaces m2 / mtr / m3 export names that are still a standard label
-        # (m2, cm, ft2, …) with the label for this quotation unit. Custom names stay.
-        def self.apply_quotation_export_names(unit_map, unit)
-          names = QUOTATION_EXPORT_NAMES[normalize_quotation_length_unit(unit)]
+        # m2 / mtr / m3 and the bare "m" used by an older schema become quantity kinds.
+        def self.normalize_plugin_uom(value)
+          uom = value.to_s.strip
+          return uom if uom.empty?
+          key = uom.downcase
+          LEGACY_UOM_KEYS.each do |quantity, legacy|
+            return quantity if legacy.any? { |old| old.casecmp(key).zero? }
+          end
+          return key if PLUGIN_UOMS.include?(key)
+          uom
+        end
+
+        def self.quantity_label(uom)
+          QUANTITY_LABELS[normalize_plugin_uom(uom)] || uom.to_s
+        end
+
+        # Replaces area / length / volume export names and accepted catalog names
+        # that are still a standard set with the set for this quotation unit.
+        # A custom export name or a custom accepted list stays. Pieces and custom do not move.
+        def self.apply_quotation_names(unit_map, unit)
+          proposed = rewrite_quotation_names(unit_map, unit, true)
+          return proposed if unit_map_safe?(proposed)
+          exports_only = rewrite_quotation_names(unit_map, unit, false)
+          return exports_only if unit_map_safe?(exports_only)
+          unit_map
+        end
+
+        def self.rewrite_quotation_names(unit_map, unit, replace_accept)
+          key = normalize_quotation_length_unit(unit)
+          names = QUOTATION_EXPORT_NAMES[key]
+          accepts = QUOTATION_ACCEPT[key]
           unit_map.each_with_object({}) do |(uom, entry), result|
             export_name = entry["export"].to_s
+            accept = Array(entry["accept"])
             export_name = names[uom] if names[uom] && standard_quotation_export_name?(uom, export_name)
-            result[uom] = { "export" => export_name, "accept" => entry["accept"] }
+            if replace_accept && accepts[uom] && standard_quotation_accept?(uom, accept)
+              accept = accepts[uom].dup
+            end
+            result[uom] = { "export" => export_name, "accept" => accept }
           end
+        end
+
+        def self.unit_map_safe?(unit_map)
+          normalize_unit_map(unit_map)
+          true
+        rescue ArgumentError
+          false
         end
 
         def self.standard_quotation_export_name?(uom, name)
@@ -376,17 +568,37 @@ module Logimaxx
           end
         end
 
-        # Plugin UOM => { "export" => external name written on BOM lines,
-        #                 "accept" => extra names read from catalog and offer lines }.
-        # The plugin UOM itself is always accepted. export defaults to that UOM.
+        def self.standard_quotation_accept?(uom, names)
+          keys = Array(names).map { |name| name.to_s.strip }.reject(&:empty?).map(&:downcase).uniq.sort
+          QUOTATION_ACCEPT.each_value.any? do |lists|
+            standard = lists[uom]
+            next false unless standard
+            keys == standard.map { |name| name.downcase }.uniq.sort
+          end
+        end
+
+        # Quantity kind => { "export" => external name written on BOM lines,
+        #                    "accept" => extra names read from catalog and offer lines }.
+        # The quantity kind itself is always accepted. Export defaults to the meter name.
         def self.default_unit_map
           {
             "pcs" => { "export" => "pcs", "accept" => ["stuks", "stuk", "pieces"] },
-            "m2" => { "export" => "m2", "accept" => ["m²"] },
-            "mtr" => { "export" => "mtr", "accept" => ["mtr.", "m", "meter", "meters", "linear meter"] },
-            "m3" => { "export" => "m3", "accept" => ["m³", "m3.", "cubic meter", "cubic meters"] },
+            "area" => { "export" => "m2", "accept" => ["m²"] },
+            "length" => { "export" => "mtr", "accept" => ["mtr.", "m", "meter", "meters", "linear meter"] },
+            "volume" => { "export" => "m3", "accept" => ["m³", "m3.", "cubic meter", "cubic meters"] },
             "custom" => { "export" => "custom", "accept" => [] }
           }
+        end
+
+        def self.unit_map_entry(raw, uom)
+          entry = raw[uom] || raw[uom.to_sym]
+          if entry.nil?
+            Array(LEGACY_UOM_KEYS[uom]).each do |old|
+              entry = raw[old] || raw[old.to_sym]
+              break unless entry.nil?
+            end
+          end
+          entry.is_a?(Hash) ? entry : default_unit_map[uom]
         end
 
         def self.normalize_unit_map(value)
@@ -394,11 +606,11 @@ module Logimaxx
           raw = {} unless raw.is_a?(Hash)
           result = {}
           seen = {}
+          fallback = default_unit_map
           PLUGIN_UOMS.each do |uom|
-            entry = raw[uom] || raw[uom.to_sym] || {}
-            entry = {} unless entry.is_a?(Hash)
-            export_name = (entry["export"] || entry[:export] || uom).to_s.strip
-            export_name = uom if export_name.empty?
+            entry = unit_map_entry(raw, uom)
+            export_name = (entry["export"] || entry[:export] || fallback[uom]["export"]).to_s.strip
+            export_name = fallback[uom]["export"] if export_name.empty? || export_name.casecmp(uom).zero?
             accept = entry["accept"] || entry[:accept] || []
             accept = accept.to_s.split(",") unless accept.is_a?(Array)
             names = []
@@ -409,10 +621,11 @@ module Logimaxx
               next if names.any? { |existing| existing.casecmp(text).zero? }
               names << text
             end
+            label = quantity_label(uom)
             ([uom, export_name] + names).each do |token|
               key = token.downcase
               if seen[key] && seen[key] != uom
-                raise ArgumentError, %(Unit alias "#{token}" is used by both #{seen[key]} and #{uom}.)
+                raise ArgumentError, %(Unit alias "#{token}" is used by both #{quantity_label(seen[key])} and #{label}.)
               end
               seen[key] = uom
             end
@@ -422,11 +635,47 @@ module Logimaxx
         end
 
         def self.stored_unit_map
-          raw = Sketchup.read_default(PREF_NAMESPACE, PREF_KEY_UNIT_MAP)
-          return default_unit_map if raw.nil? || raw.to_s.strip.empty?
-          normalize_unit_map(raw)
+          parsed = decode_pref_json(read_pref(PREF_KEY_UNIT_MAP))
+          map = parsed.nil? ? default_unit_map : normalize_unit_map(parsed)
+          apply_quotation_names(map, stored_quotation_length_unit)
         rescue StandardError
-          default_unit_map
+          apply_quotation_names(default_unit_map, DEFAULT_QUOTATION_LENGTH_UNIT)
+        end
+
+        # read_default evals the stored text and drops or unescapes quotes, so a
+        # JSON object does not round-trip. Base64 is letters, digits, and + / =.
+        def self.encode_pref_json(obj)
+          Base64.strict_encode64(JSON.generate(obj))
+        end
+
+        def self.decode_pref_json(raw)
+          return raw if raw.is_a?(Hash)
+          text = raw.to_s.delete("\0").strip
+          return nil if text.empty?
+          if pref_base64?(text)
+            return JSON.parse(Base64.strict_decode64(text))
+          end
+          JSON.parse(text)
+        rescue StandardError, ScriptError
+          nil
+        end
+
+        def self.pref_base64?(text)
+          !text.empty? && (text.length % 4).zero? && text.match?(/\A[A-Za-z0-9+\/]*={0,2}\z/)
+        end
+
+        def self.read_pref(key)
+          Sketchup.read_default(PREF_NAMESPACE, key)
+        rescue ScriptError
+          nil
+        end
+
+        def self.write_pref_string(key, text)
+          written = Sketchup.write_default(PREF_NAMESPACE, key, text)
+          raise ArgumentError, "SketchUp could not store settings." if written == false
+          stored = read_pref(key).to_s.delete("\0").strip
+          return text if stored == text
+          raise ArgumentError, "SketchUp could not store settings."
         end
       end
     end

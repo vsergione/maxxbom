@@ -3,75 +3,38 @@
   "name": "FileMaker",
   "version": "1.0.0",
   "description": "Searches the product catalog and reads or updates offer lines in FileMaker.",
+  "script": "adapter.js",
+  "actions": ["catalog.search", "orders.load", "orders.export"],
   "settings": [
     {
       "key": "catalog_api_url",
-      "role": "catalog_url",
       "label": "Catalog API URL",
       "type": "url",
       "placeholder": "https://example.com/.../query_products",
-      "hint": "Searches products and subgroups."
+      "hint": "Searches products and subgroups.",
+      "required_for": ["catalog.search"]
     },
     {
       "key": "import_api_url",
-      "role": "import_url",
       "label": "Import into FileMaker URL",
       "type": "url",
       "placeholder": "https://example.com/.../import-sketch",
-      "hint": "Writes the design into the FileMaker offer."
+      "hint": "Writes the design into the FileMaker offer.",
+      "required_for": ["orders.export"]
     },
     {
       "key": "offer_lines_api_url",
-      "role": "offer_lines_url",
       "label": "Get offer lines from FileMaker URL",
       "type": "url",
       "placeholder": "https://example.com/.../get-offer-lines",
-      "hint": "Reads the current offer lines.",
-      "when_unset": {
-        "from": "import_api_url",
-        "replace": ["import-sketch", "get-offer-lines"]
-      }
+      "hint": "Optional. When empty, the import URL is used with get-offer-lines instead of import-sketch."
     },
     {
       "key": "api_key",
-      "role": "api_key",
       "label": "API Key",
       "type": "password",
-      "hint": "Sent with catalog search, import, and offer-lines requests."
+      "hint": "Sent with catalog search, import, and offer-lines requests.",
+      "required_for": ["catalog.search", "orders.load", "orders.export"]
     }
-  ],
-  "catalog": {
-    "method": "POST",
-    "auth": { "location": "query", "name": "apiKey" },
-    "request": { "query_path": "query", "limit_path": "resultLimit" },
-    "response": {
-      "items_path": "scriptResult.result",
-      "fallback_items_paths": ["results", "data"],
-      "fields": { "code": "code", "name": "name", "unit": "unit", "category": "category" }
-    }
-  },
-  "orders": {
-    "auth": { "location": "query", "name": "apiKey" },
-    "load": {
-      "method": "POST",
-      "url": "{{offer_lines_url}}",
-      "request": { "offer_id_path": "offer_id" },
-      "response": {
-        "items_path": "scriptResult.result",
-        "fallback_items_paths": ["result"]
-      }
-    },
-    "export": {
-      "method": "POST",
-      "url": "{{import_url}}",
-      "request": { "offer_id_path": "offer_id", "items_path": "items" }
-    },
-    "fields": {
-      "id": "id",
-      "code": "code",
-      "quantity": "quantity",
-      "uom": "uom",
-      "category": "category"
-    }
-  }
+  ]
 }

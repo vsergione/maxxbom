@@ -53,6 +53,7 @@ module Logimaxx
         # containers: their nested instances are collected, they are not.
         def collect_component_instances_and_groups(entities = nil)
           entities = entities || model.entities
+          @visible_group_ids = {}
           out_occurrences = []
           out_groups = []
           identity = Geom::Transformation.new
@@ -72,6 +73,8 @@ module Logimaxx
                 child_tags = ancestor_tags + [entity_tag_name(e)]
                 child_group_names = ancestor_group_names + [group_name(e)]
                 child_visible = ancestors_visible && entity_and_tag_visible?(e)
+                # A group reached through several placements counts as visible if any of them is.
+                visible_group_ids[e.object_id] = true if child_visible
                 stack << [child, child_tr, child_ancestors, child_tags, child_group_names, child_visible, ancestor_definition_ids, depth + 1] if child
               when Sketchup::ComponentInstance
                 definition = e.definition
@@ -103,6 +106,11 @@ module Logimaxx
           collect_component_instances_and_groups(entities).first
         end
 
+        # object_id => true for groups seen visible during the last traversal.
+        def visible_group_ids
+          @visible_group_ids ||= {}
+        end
+
         # Groups that contain at least one of the given component instances (ancestor chain).
         def group_ids_containing_instances(occurrences)
           ids = {}
@@ -131,7 +139,14 @@ module Logimaxx
           raw = dict["bom_rules"]
           return [] if raw.to_s.strip.empty?
           rules = JSON.parse(raw.to_s)
-          rules.is_a?(Array) ? rules : []
+          return [] unless rules.is_a?(Array)
+          rules.each do |rule|
+            next unless rule.is_a?(Hash)
+            raw_uom = rule.key?("uom") ? rule["uom"] : rule[:uom]
+            next if raw_uom.nil?
+            rule["uom"] = Logimaxx::MaxxBOM::UI::Settings.normalize_plugin_uom(raw_uom)
+          end
+          rules
         end
 
         # True only when dict["traversable"] == "true". Absent means a BOM leaf.
@@ -204,8 +219,12 @@ module Logimaxx
         # rows = components that have bom_rules (one row per rule).
         # rows_without_rules = components with no bom_rules, one row per definition, count only.
         # rows_geometry_only = groups that contain no component instances (geometry only), one row per group.
+        #
+        # Hidden occurrences are left out: an instance that is hidden, sits on a
+        # hidden tag (or tag folder), or lies inside a hidden group/component.
         def build_report(instances_by_definition = nil)
-          instances, all_groups = collect_component_instances_and_groups
+          all_instances, all_groups = collect_component_instances_and_groups
+          instances = all_instances.select(&:visible)
           instances_by_definition ||= group_by_definition(instances)
           rows = []
           rows_without_rules = []
@@ -223,7 +242,10 @@ module Logimaxx
               end
             end
           end
-          geometry_only = geometry_only_groups(all_groups, instances)
+          # A hidden group is not listed. A group whose components are all hidden
+          # still holds components, so it is not geometry-only either.
+          visible_groups = all_groups.select { |g| visible_group_ids[g.object_id] }.uniq
+          geometry_only = geometry_only_groups(visible_groups, all_instances)
           rows_geometry_only = geometry_only.map { |g| report_row_geometry_only(g) }
           {
             rows: rows,
@@ -450,11 +472,11 @@ module Logimaxx
                 when "bbox_volume" then compute_bbox_volume(instances)
                 when "bbox_dimensions" then compute_bbox_dimensions(instances)
                 when "total_area" then compute_total_area(instances)
-                when "top_area" then compute_top_area(instances)
-                when "bottom_area" then compute_bottom_area(instances)
                 when "material_area" then compute_material_area(instances, rule)
-                when "top_perimeter" then compute_top_perimeter(instances, rule)
-                when "bottom_perimeter" then compute_bottom_perimeter(instances, rule)
+                when *FACE_SIDE_AREAS
+                  compute_face_area(instances, *FACE_SIDES[measure.sub(/_area\z/, "")])
+                when *FACE_SIDE_PERIMETERS
+                  compute_face_perimeter(instances, *FACE_SIDES[measure.sub(/_perimeter\z/, "")])
                 when "edge_length" then compute_edge_length(instances)
                 when "smart_length" then compute_smart_length(instances)
                 else compute_count(instances)
@@ -503,56 +525,39 @@ module Logimaxx
           total * area_unit_factor
         end
 
-        # Top area = faces at bbox max Z with normal up (world). Uses bounds.max.z and face.area(tr).
-        # z_tol: faces within this of max Z (inches). up_tol: normal.z >= this for "up".
+        # Faces within this of the extreme plane (inches). The normal must be
+        # nearly parallel to the side axis (either sign); 0.99 keeps it square.
         Z_TOL_TOP_AREA = 0.004 # ~0.1 mm in inches
         UP_TOL_TOP_AREA = 0.99
 
-        def compute_top_area(instances)
+        # Outer face on one side of the world-aligned bounds.
+        # front = min Y, back = max Y, left = min X, right = max X,
+        # bottom = min Z, top = max Z. The third value is the conventional
+        # outward normal sign; side_faces ignores it so mirrored instances
+        # still measure.
+        FACE_SIDES = {
+          "top" => [:z, :max, 1],
+          "bottom" => [:z, :min, -1],
+          "front" => [:y, :min, -1],
+          "back" => [:y, :max, 1],
+          "left" => [:x, :min, -1],
+          "right" => [:x, :max, 1]
+        }.freeze
+        FACE_SIDE_AREAS = FACE_SIDES.keys.map { |side| "#{side}_area" }.freeze
+        FACE_SIDE_PERIMETERS = FACE_SIDES.keys.map { |side| "#{side}_perimeter" }.freeze
+
+        def compute_face_area(instances, axis, extreme, _normal_sign = nil)
           total = 0.0
-          z_tol = Z_TOL_TOP_AREA
-          up_tol = UP_TOL_TOP_AREA
           instances.each_with_index do |occurrence, idx|
-            bounds = transformed_bounds(occurrence)
-            next unless bounds.valid?
-            tr = occurrence.transformation
-            max_z = bounds.max.z
-            faces = occurrence.definition.entities.grep(Sketchup::Face)
-            top_faces = faces.select do |f|
-              n = transformed_face_normal(f, tr)
-              next false unless n
-              next false if n.z < up_tol
-              face_at_z?(f, tr, max_z, z_tol)
-            end
-            area_sq_in = top_faces.sum { |f| f.area(tr) }
+            selected = side_faces(occurrence, axis, extreme)
+            next unless selected
+            faces, tr, target = selected
+            area_sq_in = faces.sum { |face| face.area(tr) }
             total += area_sq_in
 
-            if DEBUG_TOP_AREA && idx == 0
-              puts "\n[BOM top_area DEBUG] #{occurrence.definition.name} max_z=#{max_z} top_faces=#{top_faces.size} area_sq_in=#{area_sq_in}\n"
+            if DEBUG_TOP_AREA && idx == 0 && axis == :z && extreme == :max
+              puts "\n[BOM top_area DEBUG] #{occurrence.definition.name} max_z=#{target} top_faces=#{faces.size} area_sq_in=#{area_sq_in}\n"
             end
-          end
-          total * area_unit_factor
-        end
-
-        # Bottom area = faces at bbox min Z with normal down (world). Same logic as top_area for min_z.
-        def compute_bottom_area(instances)
-          total = 0.0
-          z_tol = Z_TOL_TOP_AREA
-          down_tol = -UP_TOL_TOP_AREA # n.z <= down_tol for "down"
-          instances.each do |occurrence|
-            bounds = transformed_bounds(occurrence)
-            next unless bounds.valid?
-            tr = occurrence.transformation
-            min_z = bounds.min.z
-            faces = occurrence.definition.entities.grep(Sketchup::Face)
-            bottom_faces = faces.select do |f|
-              n = transformed_face_normal(f, tr)
-              next false unless n
-              next false if n.z > down_tol
-              face_at_z?(f, tr, min_z, z_tol)
-            end
-            area_sq_in = bottom_faces.sum { |f| f.area(tr) }
-            total += area_sq_in
           end
           total * area_unit_factor
         end
@@ -575,69 +580,42 @@ module Logimaxx
           total * area_unit_factor
         end
 
-        # Top boundary perimeter = length of edges that belong to exactly one top face (contour at max Z).
-        # Same top-face selection as top_area (bounds.max.z, up_tol, z_tol).
-        def compute_top_perimeter(instances, _rule = nil)
-          total = 0.0
-          z_tol = Z_TOL_TOP_AREA
-          up_tol = UP_TOL_TOP_AREA
-          instances.each do |occurrence|
-            bounds = transformed_bounds(occurrence)
-            next unless bounds.valid?
-            tr = occurrence.transformation
-            max_z = bounds.max.z
-            faces = occurrence.definition.entities.grep(Sketchup::Face)
-            top_faces = faces.select do |f|
-              n = transformed_face_normal(f, tr)
-              next false unless n
-              next false if n.z < up_tol
-              face_at_z?(f, tr, max_z, z_tol)
-            end
-            next if top_faces.empty?
-
-            top_set = top_faces.map { |f| [f, true] }.to_h
-            boundary_edges = []
-            top_faces.each do |f|
-              f.edges.each do |e|
-                top_adj = e.faces.count { |ff| top_set[ff] }
-                boundary_edges << e if top_adj == 1
-              end
-            end
-            perim_in = boundary_edges.uniq.sum { |e| edge_length_in_world(e, tr) }
-            total += perim_in
+        # Faces on the outer plane of one world-aligned side. The normal must
+        # be nearly parallel to that axis; either sign is accepted so a
+        # mirrored instance still contributes. Returns
+        # [faces, transformation, plane coordinate], or nil when empty.
+        def side_faces(occurrence, axis, extreme, _normal_sign = nil)
+          bounds = transformed_bounds(occurrence)
+          return nil unless bounds.valid?
+          tr = occurrence.transformation
+          target = (extreme == :max ? bounds.max : bounds.min).send(axis)
+          faces = occurrence.definition.entities.grep(Sketchup::Face).select do |face|
+            normal = transformed_face_normal(face, tr)
+            next false unless normal
+            next false if normal.send(axis).abs < UP_TOL_TOP_AREA
+            face_on_plane?(face, tr, axis, target, Z_TOL_TOP_AREA)
           end
-          total * length_unit_factor
+          [faces, tr, target]
         end
 
-        # Bottom boundary perimeter = length of edges that belong to exactly one bottom face (contour at min Z).
-        def compute_bottom_perimeter(instances, _rule = nil)
+        # Perimeter of one outer side: length of edges that belong to exactly one selected face.
+        def compute_face_perimeter(instances, axis, extreme, _normal_sign = nil)
           total = 0.0
-          z_tol = Z_TOL_TOP_AREA
-          down_tol = -UP_TOL_TOP_AREA
           instances.each do |occurrence|
-            bounds = transformed_bounds(occurrence)
-            next unless bounds.valid?
-            tr = occurrence.transformation
-            min_z = bounds.min.z
-            faces = occurrence.definition.entities.grep(Sketchup::Face)
-            bottom_faces = faces.select do |f|
-              n = transformed_face_normal(f, tr)
-              next false unless n
-              next false if n.z > down_tol
-              face_at_z?(f, tr, min_z, z_tol)
-            end
-            next if bottom_faces.empty?
+            selected = side_faces(occurrence, axis, extreme)
+            next unless selected
+            faces, tr, = selected
+            next if faces.empty?
 
-            bottom_set = bottom_faces.map { |f| [f, true] }.to_h
+            selected_set = faces.map { |face| [face, true] }.to_h
             boundary_edges = []
-            bottom_faces.each do |f|
-              f.edges.each do |e|
-                bottom_adj = e.faces.count { |ff| bottom_set[ff] }
-                boundary_edges << e if bottom_adj == 1
+            faces.each do |face|
+              face.edges.each do |edge|
+                adjacent = edge.faces.count { |other| selected_set[other] }
+                boundary_edges << edge if adjacent == 1
               end
             end
-            perim_in = boundary_edges.uniq.sum { |e| edge_length_in_world(e, tr) }
-            total += perim_in
+            total += boundary_edges.uniq.sum { |edge| edge_length_in_world(edge, tr) }
           end
           total * length_unit_factor
         end
@@ -745,8 +723,12 @@ module Logimaxx
         end
 
         def face_at_z?(face, tr, target_z, tolerance)
+          face_on_plane?(face, tr, :z, target_z, tolerance)
+        end
+
+        def face_on_plane?(face, tr, axis, target, tolerance)
           face.vertices.all? do |vertex|
-            (vertex.position.transform(tr).z - target_z).abs <= tolerance
+            (vertex.position.transform(tr).send(axis) - target).abs <= tolerance
           end
         end
 

@@ -1,0 +1,91 @@
+.rules-table-wrap {
+  margin: 10px;
+  /* overflow-x: auto; */
+}
+
+.rules-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+input, select {
+  font-size: 10px;
+}
+
+.rules-table th,
+.rules-table td {
+  border: 1px solid #ccc;
+  padding: 2px 2px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.rules-table th {
+  background: #f0f0f0;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.rules-table tbody tr:hover {
+  background: #fafafa;
+}
+
+.rules-table .rules-data-row--dirty td {
+  border-color: #e6a000;
+  background: #fffef5;
+}
+
+.rules-table .catalog-search-wrap {
+  position: relative;
+  /* min-width: 120px; */
+}
+
+.rules-table .cell-code{
+  width: 70px;
+}
+.rules-table .cell-label {
+  width: 90px;
+  /* min-width: 80px; */
+  box-sizing: border-box;
+}
+.rules-table .bom_measure {
+  width: 50px;
+}
+
+.rules-table .cell-rounding-step {
+  width: 50px;
+  /* width: 70px; */
+}
+
+.rules-table select {
+  /* min-width: 100px; */
+  /* max-width: 100%; */
+}
+
+.rules-table .btn-delete-row {
+  padding: 4px 8px;
+  cursor: pointer;
+  border: 1px solid #ccc;
+  background: #fff;
+  border-radius: 4px;
+}
+
+.rules-table .btn-delete-row:hover {
+  background: #fee;
+  border-color: #c00;
+}
+
+.rules-table-wrap .empty-rules-placeholder {
+  margin-top: 16px;
+}
+
+.catalog-dropdown .item-source {
+  margin-left: 8px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #fff6d8;
+  color: #6a5a00;
+  font-size: 10px;
+  font-weight: 600;
+  vertical-align: middle;
+}

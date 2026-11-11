@@ -27,11 +27,11 @@ module Logimaxx
       end
     end
 
-    # Sends a standardized payload to the Attributes HTML dialog when selection changes.
+    # Sends a standardized payload to the Rules HTML dialog when selection changes.
     # Payload types:
     #   - error: none_selected | multiple_selected | not_a_component (single selection is not a component instance)
-    #   - attributes: when exactly one ComponentInstance (not Group/Face/Edge/…) is selected
-    class SelectionToAttributesObserver < Sketchup::SelectionObserver
+    #   - rules: when exactly one ComponentInstance (not Group/Face/Edge/…) is selected
+    class SelectionToRulesObserver < Sketchup::SelectionObserver
       def onSelectionBulkChange(selection)
         push_selection_to_ui(selection.to_a)
       end
@@ -46,27 +46,27 @@ module Logimaxx
 
       def push_selection_to_ui(entities)
         ns = Logimaxx::MaxxBOM
-        dialog = ns.dialogs[:attributes]
+        dialog = ns.dialogs[:rules]
         return unless dialog
 
-        payload = ns.build_attributes_selection_payload(entities)
+        payload = ns.build_rules_selection_payload(entities)
         UI.inject_json(dialog, "onSketchUpSelection", payload)
       end
     end
 
-    # Shared payload builder so the attributes dialog can show current selection on open.
+    # Shared payload builder so the rules dialog can show current selection on open.
     BOM_RULES_DICT = "Cialona_BOM_Rules".freeze
     DEFAULT_SCHEMA_VERSION = "1.0".freeze
     DEFAULT_BOM_RULES_JSON = "[]".freeze
 
-    def self.build_attributes_selection_payload(entities)
+    def self.build_rules_selection_payload(entities)
       case entities.size
       when 0
         { type: "error", reason: "none_selected" }
       when 1
         entity = entities.first
         if component_instance?(entity)
-          build_attributes_payload_for_entity(entity)
+          build_rules_payload_for_entity(entity)
         else
           { type: "error", reason: "not_a_component" }
         end
@@ -89,7 +89,7 @@ module Logimaxx
       end.uniq.sort
     end
 
-    def self.build_attributes_payload_for_entity(entity)
+    def self.build_rules_payload_for_entity(entity)
       definition = entity.definition
       dict = definition.respond_to?(:attribute_dictionaries) && definition.attribute_dictionaries &&
              definition.attribute_dictionary(BOM_RULES_DICT)
@@ -102,11 +102,11 @@ module Logimaxx
                   end
       bom_rules = DEFAULT_BOM_RULES_JSON if bom_rules.to_s.strip.empty?
       materials = definition_material_names(definition)
-      exportable = (dict && dict["exportable"].to_s.downcase == "false") ? false : true
       has_inner_components = BOM::Exporter.contains_component_instances?(definition)
       traversable = has_inner_components && dict && dict["traversable"].to_s.downcase == "true"
+      exportable = traversable ? false : ((dict && dict["exportable"].to_s.downcase == "false") ? false : true)
       {
-        type: "attributes",
+        type: "rules",
         schema_version: schema_version.to_s,
         bom_rules: bom_rules.to_s,
         materials: materials,
@@ -150,13 +150,14 @@ module Logimaxx
       bom/exporter
       commands
       ui
-      ui/attributes
+      ui/rules
       ui/bom_exporter
     ].freeze
 
 
     FILES.each { |rel| require_relative rel }
     require_relative "dev" if dev_mode?
+    require_relative "bridge" if dev_mode?
 
     # init runs on every load, including reload!. UI creation is guarded below.
 
@@ -165,6 +166,7 @@ module Logimaxx
       register_observers
       build_menu
       build_toolbar
+      Bridge.start if dev_mode? && defined?(Bridge)
     end
 
     # One app observer per session. cleanup drops it; the next init adds it back.
@@ -189,7 +191,7 @@ module Logimaxx
       @menu = ::UI.menu("Extensions").add_submenu(DISPLAY_NAME)
       @menu.add_item(Logimaxx::MaxxBOM::Commands.reload_dev_command) if dev_mode?
       @menu.add_item(Logimaxx::MaxxBOM::Commands.export_bom_command)
-      @menu.add_item(Logimaxx::MaxxBOM::Commands.attributes_command)
+      @menu.add_item(Logimaxx::MaxxBOM::Commands.rules_command)
       @menu.add_item(Logimaxx::MaxxBOM::Commands.settings_command)
       # @menu.add_item(Logimaxx::MaxxBOM::Commands.to_be_implemented_command)
     end
@@ -201,7 +203,7 @@ module Logimaxx
 
       # SketchUp toolbars cannot be removed, only hidden. Add buttons once per session.
       @toolbar.add_item(Logimaxx::MaxxBOM::Commands.export_bom_command)
-      @toolbar.add_item(Logimaxx::MaxxBOM::Commands.attributes_command)
+      @toolbar.add_item(Logimaxx::MaxxBOM::Commands.rules_command)
       @toolbar.add_item(Logimaxx::MaxxBOM::Commands.settings_command)
       # @toolbar.add_item(Logimaxx::MaxxBOM::Commands.to_be_implemented_command)
       @toolbar.add_item(Logimaxx::MaxxBOM::Commands.reload_dev_command) if dev_mode?
@@ -209,7 +211,7 @@ module Logimaxx
     end
 
     def self.register_observers
-      # Selection observer is attached only when the Attributes dialog is open (see ensure_selection_observer_for_model and Attributes on_ready / on_closed).
+      # Selection observer is attached only when the Rules dialog is open (see ensure_selection_observer_for_model and Rules on_ready / on_closed).
     end
 
     # Returns true if the selection observer is already attached to the given model (no need to re-attach or push).
@@ -218,7 +220,7 @@ module Logimaxx
       @selection_observer_model && @selection_observer_model.valid? && @selection_observer_model == model
     end
 
-    # Removes the selection observer (e.g. when the Attributes dialog is closed). Does not remove ModelSwitchObserver.
+    # Removes the selection observer (e.g. when the Rules dialog is closed). Does not remove ModelSwitchObserver.
     def self.remove_selection_observer
       if @selection_observer_model && @selection_observer_model.valid? && @selection_observer
         @selection_observer_model.selection.remove_observer(@selection_observer) rescue nil
@@ -230,7 +232,7 @@ module Logimaxx
     # When opening another file or switching document, observers are lost. Re-attach for the active model.
     def self.ensure_selection_observer_for_model(model)
       return unless model
-      return unless dialogs[:attributes]  # Only maintain observer while Attributes dialog is open
+      return unless dialogs[:rules]  # Only maintain observer while Rules dialog is open
       if @selection_observer_model && @selection_observer_model.valid? && @selection_observer_model == model
         return # already attached to this model
       end
@@ -238,17 +240,18 @@ module Logimaxx
         @selection_observer_model.selection.remove_observer(@selection_observer) rescue nil
       end
       @selection_observer_model = model
-      @selection_observer = SelectionToAttributesObserver.new
+      @selection_observer = SelectionToRulesObserver.new
       model.selection.add_observer(@selection_observer)
       # Push current selection so UI updates for the new model
-      payload = build_attributes_selection_payload(model.selection.to_a)
-      dialog = dialogs[:attributes]
+      payload = build_rules_selection_payload(model.selection.to_a)
+      dialog = dialogs[:rules]
       UI.inject_json(dialog, "onSketchUpSelection", payload) if dialog
     end
 
     def self.cleanup
       close_dialogs
       remove_observers
+      Bridge.stop if defined?(Bridge)
     end
 
     def self.dialogs

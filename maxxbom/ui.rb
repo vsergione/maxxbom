@@ -1,8 +1,8 @@
 # ui.rb — Multi-dialog UI: orchestration and lifecycle
 # ------------------------------------------------------------------------------
-# Each dialog lives in its own module under UI (e.g. UI::Attributes, UI::BOMExporter).
+# Each dialog lives in its own module under UI (e.g. UI::Rules, UI::BOMExporter).
 # Each module defines template_path, opts, register(dialog).
-# Show with UI.show(:attributes) or UI.show(:bom_exporter).
+# Show with UI.show(:rules) or UI.show(:bom_exporter).
 # ------------------------------------------------------------------------------
 
 module Logimaxx
@@ -11,12 +11,13 @@ module Logimaxx
       UI_DIR = File.join(__dir__, 'ui')
 
       require_relative 'ui/adapters'
-      require_relative 'ui/attributes'
+      require_relative 'ui/datasources'
+      require_relative 'ui/rules'
       require_relative 'ui/bom_exporter'
       require_relative 'ui/settings'
 
       DIALOG_MODULES = {
-        attributes: Attributes,
+        rules: Rules,
         export_bom: BOMExporter,
         settings: Settings
       }.freeze
@@ -46,10 +47,11 @@ module Logimaxx
       # Callers (so you can find who triggers which callback):
       #   onSettingsLoaded  -> ui/settings.rb (on_get_settings)
       #   onSettingsSaved   -> ui/settings.rb (on_save_settings)
-      #   onCatalogCsvPicked -> ui/settings.rb (pick_catalog_csv, preview_catalog_csv)
-      #   onAdaptersChanged  -> ui/settings.rb (load_api_adapter, remove_api_adapter)
-      #   onCatalogSettings -> ui/attributes.rb (on_get_catalog_settings)
-      #   onSketchUpSelection -> main.rb, ui/attributes.rb
+      #   onDatasourceFilePicked -> ui/settings.rb (pick_datasource_file)
+      #   onAdaptersChanged  -> ui/settings.rb (load, remove, add data source)
+      #   onCatalogSettings -> ui/rules.rb (on_get_catalog_settings)
+      #   onSketchUpSelection -> main.rb, ui/rules.rb
+      #   onRulePreview -> ui/rules.rb (on_preview_rules)
       #   onInitialState, onPluginSettings, onExportResult, onOfferCsvLoaded -> ui/bom_exporter.rb
       def self.inject_json(dialog, js_callback_name, data)
         require "base64"

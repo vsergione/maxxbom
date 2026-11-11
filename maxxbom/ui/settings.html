@@ -23,13 +23,18 @@
     .path-row { display: flex; gap: 8px; align-items: center; max-width: 520px; }
     .path-row input { flex: 1; max-width: none; }
     .adapter-list { display: flex; flex-direction: column; gap: 6px; margin: 0 0 8px; }
-    .adapter-list label { display: flex; gap: 8px; align-items: center; }
+    .ds-row { display: flex; flex-direction: column; align-items: stretch; gap: 0; padding: 8px 10px; border: 1px solid #d0d4da; border-radius: 4px; background: #fff; }
+    .ds-head { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+    .ds-row.selected { border-color: #2171b8; }
+    .ds-row .ds-copy { display: flex; flex-direction: column; }
+    .ds-body { margin-top: 10px; padding-top: 10px; border-top: 1px solid #e4e7eb; cursor: default; }
+    .ds-meta { color: #777; font-size: 11px; }
     .adapter-input:disabled { opacity: 0.55; }
     .adapter-meta { color: #777; font-size: 11px; }
     .unit-map { width: 100%; border-collapse: collapse; margin-top: 8px; }
     .unit-map th, .unit-map td { text-align: left; font-size: 12px; padding: 4px 8px 4px 0; vertical-align: middle; }
     .unit-map input { width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; box-sizing: border-box; }
-    .unit-map .plugin-unit { font-weight: 600; width: 64px; }
+    .unit-map .plugin-unit { font-weight: 600; width: 72px; }
     .actions { margin-top: 12px; display: flex; gap: 8px; align-items: center; flex: none; }
     .message { flex: none; }
     .btn { padding: 8px 16px; cursor: pointer; border: none; border-radius: 4px; font-size: 13px; }
@@ -38,7 +43,7 @@
     .btn-cancel, .btn-secondary { background: #e0e0e0; color: #333; }
     .btn-cancel:hover, .btn-secondary:hover { background: #d0d0d0; }
     .btn:disabled { opacity: 0.55; cursor: default; }
-    .message { margin-top: 12px; font-size: 12px; color: #2d7d2d; }
+    .message { margin: 0 0 8px; font-size: 12px; color: #2d7d2d; }
     .message.error { color: #b00; }
   </style>
   <title>Plugin Settings</title>
@@ -47,20 +52,19 @@
   <h2>Plugin Settings</h2>
   <div class="tabs">
     <button type="button" class="tab active" id="tab-general" onclick="showTab('general')">General</button>
-    <button type="button" class="tab" id="tab-api" onclick="showTab('api')">API</button>
-    <button type="button" class="tab" id="tab-csv" onclick="showTab('csv')">CSV</button>
+    <button type="button" class="tab" id="tab-datasources" onclick="showTab('datasources')">Data sources</button>
+    <button type="button" class="tab" id="tab-plugins" onclick="showTab('plugins')">Plugins</button>
   </div>
+  <p class="message" id="message" style="display: none;"></p>
 
   <div class="tab-content">
   <div class="panel" id="panel-general">
     <div class="step">
-      <div class="step-title">Editing mode</div>
+      <div class="step-title">Data sources</div>
       <div class="field">
-        <label class="checkbox-label">
-          <input type="checkbox" id="free_edit_mode" onchange="updateFreeEditModeUi()" />
-          <span>Free edit mode</span>
-        </label>
-        <p class="hint">Allows arbitrary attribute values. API adapter operations are disabled in this mode.</p>
+        <label for="catalog-data-source">Product lookup</label>
+        <select id="catalog-data-source" onchange="onCatalogChoiceChange()"></select>
+        <p class="hint" id="catalog-choice-hint">Searches products and checks codes. Free edit mode allows arbitrary rule values and turns data source calls off. Offer lines use this same data source when its adapter can read and update them.</p>
       </div>
     </div>
     <div class="step">
@@ -79,80 +83,49 @@
     </div>
     <div class="step">
       <div class="step-title">Unit mapping</div>
-      <p class="hint">Plugin units stay fixed. External unit is written on BOM export and matched when offer lines are loaded. Changing the quotation unit updates length, area and volume names while they are still a standard name (m2, cm, ft2, …). A custom name is kept. Also accepted lists extra catalog names, separated by commas.</p>
+      <p class="hint">Quantity kind stays fixed: pieces, area, length, volume, custom. External unit is written on BOM export and matched when offer lines are loaded. Changing the quotation unit updates area, length and volume names, and the accepted catalog names, while each one is still a standard set (m2, sq ft, …). A custom name or a custom accepted list is kept. Also accepted lists extra catalog names, separated by commas.</p>
       <table class="unit-map">
         <thead>
-          <tr><th>Plugin</th><th>External unit</th><th>Also accepted</th></tr>
+          <tr><th>Quantity</th><th>External unit</th><th>Also accepted</th></tr>
         </thead>
         <tbody id="unit-map-body"></tbody>
       </table>
     </div>
-    <div class="step">
-      <div class="step-title">Catalog</div>
-      <div class="field">
-        <label for="catalog_source">Product source</label>
-        <select id="catalog_source" onchange="onCatalogSourceChange()"></select>
-        <p class="hint" id="catalog-source-hint"></p>
-      </div>
+    <div class="step" id="debug-facility-step" hidden>
+      <div class="step-title">Development</div>
       <div class="field">
         <label class="checkbox-label">
-          <input type="checkbox" id="catalog_validate_codes" checked />
-          <span>Validate product codes against catalog (recommended)</span>
+          <input type="checkbox" id="debug_facility" checked />
+          <span>Show debug panels</span>
         </label>
+        <p class="hint">Status and log dock on the rules window and the export dialog. Reload stays available.</p>
       </div>
     </div>
   </div>
 
-  <div class="panel" id="panel-api" hidden>
+  <div class="panel" id="panel-datasources" hidden>
     <div class="step">
-      <div class="step-title">Installed adapters</div>
-      <div class="adapter-list" id="adapter-list"></div>
-      <p class="hint" id="legacy-filemaker-hint" hidden>A FileMaker connection from an earlier version is still stored. Load the FileMaker adapter to keep using it.</p>
+      <div class="step-title">Data sources</div>
+      <div class="adapter-list" id="datasource-list"></div>
       <div class="path-row">
-        <button type="button" class="btn btn-secondary" id="btn-load-adapter" onclick="loadAdapter()">Load adapter…</button>
-        <button type="button" class="btn btn-secondary" id="btn-remove-adapter" onclick="removeAdapter()">Remove</button>
+        <input type="text" id="new-datasource-name" placeholder="Name" />
+        <select id="new-datasource-adapter"></select>
+        <button type="button" class="btn btn-secondary" id="btn-add-datasource" onclick="addDataSource()">Add</button>
       </div>
-      <p class="hint">Choose the adapter folder. It must contain adapter.json. Load and remove take effect immediately. The selected adapter is the one used for orders, and for the catalog when that source is selected. Save stores its connection.</p>
-    </div>
-    <div class="step">
-      <div class="step-title" id="adapter-config-title">Connection</div>
-      <p class="hint" id="adapter-description"></p>
-      <div id="adapter-fields"></div>
+      <p class="hint">A data source is a named setup of a plugin installed on the Plugins tab. You can add more than one of the same plugin. Click a card to set it up.</p>
     </div>
   </div>
 
-  <div class="panel" id="panel-csv" hidden>
+  <div class="panel" id="panel-plugins" hidden>
     <div class="step">
-      <div class="step-title">Catalog file</div>
-      <div class="field">
-        <label for="catalog_csv_path">CSV file</label>
-        <div class="path-row">
-          <input type="text" id="catalog_csv_path" readonly placeholder="No file selected" />
-          <button type="button" class="btn btn-secondary" id="btn-browse-csv" onclick="browseCatalogCsv()">Browse</button>
-          <button type="button" class="btn btn-secondary" id="btn-clear-csv" onclick="clearCatalogCsv()">Clear</button>
-        </div>
-        <p class="hint" id="csv-header-hint">Choose a CSV file.</p>
+      <div class="step-title">Installed plugins</div>
+      <div class="adapter-list" id="installed-adapters"></div>
+      <div id="available-adapters"></div>
+      <p class="hint" id="legacy-filemaker-hint" hidden>A FileMaker connection from an earlier version is still stored. Load the FileMaker plugin to keep using it.</p>
+      <div class="path-row">
+        <button type="button" class="btn btn-secondary" id="btn-load-adapter" onclick="loadAdapter()">Load plugin…</button>
       </div>
-    </div>
-    <div class="step">
-      <div class="step-title">Field mapping</div>
-      <p class="hint">Choose a CSV column for each product field. Code is required when CSV is the product source.</p>
-      <div class="field">
-        <label for="csv-field-code">Code</label>
-        <select id="csv-field-code" class="csv-field"></select>
-      </div>
-      <div class="field">
-        <label for="csv-field-name">Name</label>
-        <select id="csv-field-name" class="csv-field"></select>
-      </div>
-      <div class="field">
-        <label for="csv-field-unit">Unit</label>
-        <select id="csv-field-unit" class="csv-field"></select>
-      </div>
-      <div class="field">
-        <label for="csv-field-category">Category</label>
-        <select id="csv-field-category" class="csv-field"></select>
-      </div>
+      <p class="hint">Load installs a plugin so it can be used as a data source. It does not create one. Removing a plugin also removes its data sources. The CSV adapter stays installed.</p>
     </div>
   </div>
   </div>
@@ -161,18 +134,19 @@
     <button type="button" class="btn btn-save" id="btn-save" onclick="saveSettings()">Save</button>
     <button type="button" class="btn btn-cancel" id="btn-cancel" onclick="closeDialog()">Cancel</button>
   </div>
-  <p class="message" id="message" style="display: none;"></p>
 
   <script src="unit_map.js"></script>
   <script>
-    var CSV_FIELDS = ["code", "name", "unit", "category"];
-    var TABS = ["general", "api", "csv"];
-    var adapterState = {
-      adapters: [],
-      activeId: "",
-      values: {},
-      legacyFilemakerPending: false,
-      catalogSource: "csv"
+    var TABS = ["general", "datasources", "plugins"];
+    var dsState = {
+      dataSources: [],
+      installed: [],
+      available: [],
+      selectedId: "",
+      catalogId: "",
+      freeEdit: false,
+      fileHeaders: {},
+      legacyFilemakerPending: false
     };
 
     function showTab(name) {
@@ -191,11 +165,39 @@
       if (typeof UnitMap === "undefined" || !UnitMap.exportNameFor) return;
       var unitEl = document.getElementById("quotation_length_unit");
       if (!unitEl) return;
-      ["m2", "mtr", "m3"].forEach(function(uom) {
-        var input = document.getElementById("unit-export-" + uom);
-        if (!input) return;
-        if (UnitMap.standardExportName(uom, input.value)) input.value = UnitMap.exportNameFor(unitEl.value, uom);
+      var snapshot = UnitMap.DIMENSIONS.map(function(uom) {
+        var exportInput = document.getElementById("unit-export-" + uom);
+        var acceptInput = document.getElementById("unit-accept-" + uom);
+        return {
+          exportInput: exportInput,
+          acceptInput: acceptInput,
+          exportValue: exportInput ? exportInput.value : "",
+          acceptValue: acceptInput ? acceptInput.value : ""
+        };
       });
+      UnitMap.DIMENSIONS.forEach(function(uom, index) {
+        var row = snapshot[index];
+        if (row.exportInput && UnitMap.standardExportName(uom, row.exportValue)) {
+          row.exportInput.value = UnitMap.exportNameFor(unitEl.value, uom);
+        }
+        if (row.acceptInput && UnitMap.standardAcceptList(uom, row.acceptValue)) {
+          row.acceptInput.value = UnitMap.acceptFor(unitEl.value, uom).join(", ");
+        }
+      });
+      try {
+        collectUnitMap();
+      } catch (e) {
+        snapshot.forEach(function(row) {
+          if (row.acceptInput) row.acceptInput.value = row.acceptValue;
+        });
+        try {
+          collectUnitMap();
+        } catch (e2) {
+          snapshot.forEach(function(row) {
+            if (row.exportInput) row.exportInput.value = row.exportValue;
+          });
+        }
+      }
     }
 
     function renderUnitMap(value) {
@@ -208,7 +210,7 @@
         var row = document.createElement("tr");
         var plugin = document.createElement("td");
         plugin.className = "plugin-unit";
-        plugin.textContent = uom;
+        plugin.textContent = UnitMap.quantityLabel(uom);
         var exportCell = document.createElement("td");
         var exportInput = document.createElement("input");
         exportInput.type = "text";
@@ -241,7 +243,7 @@
         [uom, exportName].concat(accept).forEach(function(token) {
           var key = token.toLowerCase();
           if (seen[key] && seen[key] !== uom) {
-            throw new Error("Unit alias \"" + token + "\" is used by both " + seen[key] + " and " + uom + ".");
+            throw new Error("Unit alias \"" + token + "\" is used by both " + UnitMap.quantityLabel(seen[key]) + " and " + UnitMap.quantityLabel(uom) + ".");
           }
           seen[key] = uom;
         });
@@ -250,358 +252,614 @@
       return map;
     }
 
-    function adapterById(id) {
-      var adapters = adapterState.adapters || [];
-      for (var i = 0; i < adapters.length; i++) {
-        if (adapters[i].id === id) return adapters[i];
+    function encodeJson(obj) {
+      return btoa(unescape(encodeURIComponent(JSON.stringify(obj))));
+    }
+
+    function sourceById(id) {
+      var sources = dsState.dataSources || [];
+      for (var i = 0; i < sources.length; i++) {
+        if (sources[i].id === id) return sources[i];
       }
       return null;
     }
 
-    function activeAdapter() {
-      return adapterById(adapterState.activeId);
+    function selectedSource() {
+      return sourceById(dsState.selectedId);
     }
 
-    function cloneAdapterValues(values) {
-      var copy = {};
-      Object.keys(values || {}).forEach(function(id) {
-        copy[id] = Object.assign({}, values[id]);
+    function supportsActions(source, actions) {
+      var have = source && source.actions ? source.actions : [];
+      for (var i = 0; i < actions.length; i++) {
+        if (have.indexOf(actions[i]) < 0) return false;
+      }
+      return true;
+    }
+
+    function cloneSources(sources) {
+      return (sources || []).map(function(source) {
+        var copy = Object.assign({}, source);
+        copy.values = Object.assign({}, source.values || {});
+        copy.actions = (source.actions || []).slice();
+        copy.settings = (source.settings || []).slice();
+        return copy;
       });
-      return copy;
     }
 
-    function applyAdapterPayload(data) {
-      adapterState.adapters = data && Array.isArray(data.adapters) ? data.adapters : [];
-      adapterState.activeId = data && data.active_api_adapter ? data.active_api_adapter : "";
-      adapterState.values = data && data.api_adapter_values ? data.api_adapter_values : {};
-      adapterState.legacyFilemakerPending = !!(data && (data.legacy_filemaker_pending === true || data.legacy_filemaker_pending === "true"));
+    function applyDatasourcePayload(data) {
+      dsState.dataSources = data && Array.isArray(data.data_sources) ? data.data_sources : [];
+      dsState.installed = data && Array.isArray(data.installed) ? data.installed : [];
+      dsState.available = data && Array.isArray(data.available) ? data.available : [];
+      dsState.catalogId = data && data.catalog_data_source ? data.catalog_data_source : "";
+      dsState.fileHeaders = data && data.file_headers ? data.file_headers : {};
+      dsState.legacyFilemakerPending = !!(data && (data.legacy_filemaker_pending === true || data.legacy_filemaker_pending === "true"));
+      dsState.dataSources.forEach(function(source) {
+        source.values = source.values || {};
+      });
     }
 
-    function renderAdapterList() {
-      var list = document.getElementById("adapter-list");
+    function keepLocalEdits(previousSources, previousHeaders) {
+      var previous = {};
+      (previousSources || []).forEach(function(source) { previous[source.id] = source; });
+      dsState.dataSources.forEach(function(source) {
+        var prior = previous[source.id];
+        if (!prior) return;
+        source.values = Object.assign({}, source.values, prior.values || {});
+        var localHeaders = previousHeaders[source.id];
+        if (!localHeaders) return;
+        var kept = Object.assign({}, dsState.fileHeaders[source.id] || {});
+        Object.keys(localHeaders).forEach(function(key) {
+          var priorPath = prior.values ? prior.values[key] : "";
+          var nextPath = source.values ? source.values[key] : "";
+          if (priorPath === nextPath) kept[key] = localHeaders[key];
+        });
+        dsState.fileHeaders[source.id] = kept;
+      });
+    }
+
+    function collectDatasourceValues() {
+      var source = selectedSource();
+      if (!source || source.missing) return;
+      var values = Object.assign({}, source.values || {});
+      (source.settings || []).forEach(function(field) {
+        var input = document.getElementById("ds-field-" + field.key);
+        if (input) values[field.key] = input.value.trim();
+      });
+      source.values = values;
+    }
+
+    function collectRoleIds() {
+      var catalog = document.getElementById("catalog-data-source");
+      if (!catalog) return;
+      if (catalog.value === "free_edit") dsState.freeEdit = true;
+      else {
+        dsState.freeEdit = false;
+        dsState.catalogId = catalog.value || "";
+      }
+    }
+
+    function fileHeaderState(sourceId, key) {
+      var perSource = dsState.fileHeaders[sourceId] || {};
+      return perSource[key] || { headers: [], error: null };
+    }
+
+    function fileHint(status, hasPath) {
+      if (!hasPath) return "Choose a file.";
+      if (status.error === "damaged") return "This path was damaged by Windows backslashes. Choose the file again, then save.";
+      if (status.error === "missing") return "File was not found.";
+      if (status.error === "invalid") return "Could not read the header row.";
+      return "Column lists use the first row of this file.";
+    }
+
+    function renderDatasourceList() {
+      var list = document.getElementById("datasource-list");
       if (!list) return;
       list.innerHTML = "";
-      var adapters = adapterState.adapters || [];
-      if (!adapters.length) {
+      var sources = dsState.dataSources || [];
+      if (!sources.length) {
         var empty = document.createElement("p");
         empty.className = "hint";
-        empty.textContent = "No API adapter loaded.";
+        empty.textContent = "No data sources yet.";
         list.appendChild(empty);
         return;
       }
-      adapters.forEach(function(adapter) {
-        var label = document.createElement("label");
-        var radio = document.createElement("input");
-        radio.type = "radio";
-        radio.className = "adapter-input";
-        radio.name = "active_api_adapter";
-        radio.value = adapter.id;
-        radio.checked = adapter.id === adapterState.activeId;
-        radio.onchange = function() { setActiveAdapter(adapter.id); };
-        var text = document.createElement("span");
-        text.textContent = adapter.name + (adapter.missing ? " (file missing)" : "");
-        label.appendChild(radio);
-        label.appendChild(text);
-        if (adapter.version && !adapter.missing) {
-          var meta = document.createElement("span");
-          meta.className = "adapter-meta";
-          meta.textContent = adapter.version;
-          label.appendChild(meta);
+      sources.forEach(function(source) {
+        var open = source.id === dsState.selectedId;
+        var row = document.createElement("div");
+        row.className = "ds-row" + (open ? " selected" : "");
+        var head = document.createElement("div");
+        head.className = "ds-head";
+        var copy = document.createElement("div");
+        copy.className = "ds-copy";
+        var title = document.createElement("span");
+        title.textContent = source.name + (source.missing ? " (adapter missing)" : "");
+        var meta = document.createElement("span");
+        meta.className = "ds-meta";
+        meta.textContent = source.adapter_name + ((source.actions || []).length ? " · " + source.actions.join(", ") : "");
+        copy.appendChild(title);
+        copy.appendChild(meta);
+        head.appendChild(copy);
+        head.addEventListener("click", function() { selectDataSource(source.id); });
+        row.appendChild(head);
+        if (open) {
+          var body = document.createElement("div");
+          body.className = "ds-body";
+          body.id = "datasource-fields";
+          fillDatasourceFields(body, source);
+          body.appendChild(removeDatasourceButton());
+          row.appendChild(body);
         }
-        list.appendChild(label);
+        list.appendChild(row);
       });
     }
 
-    function renderAdapterFields() {
-      var root = document.getElementById("adapter-fields");
-      var title = document.getElementById("adapter-config-title");
-      var description = document.getElementById("adapter-description");
-      if (!root) return;
-      root.innerHTML = "";
-      var adapter = activeAdapter();
-      if (title) title.textContent = adapter && !adapter.missing ? adapter.name : "Connection";
-      if (description) {
-        description.textContent = adapter && adapter.description ? adapter.description : "";
-        description.hidden = !description.textContent;
+    function renderAddAdapterChoices() {
+      var select = document.getElementById("new-datasource-adapter");
+      if (!select) return;
+      var current = select.value;
+      select.innerHTML = "";
+      (dsState.installed || []).forEach(function(adapter) {
+        if (adapter.missing) return;
+        var option = document.createElement("option");
+        option.value = adapter.id;
+        option.textContent = adapter.name;
+        select.appendChild(option);
+      });
+      if (current && select.querySelector('option[value="' + current + '"]')) select.value = current;
+    }
+
+    function removeDatasourceButton() {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn btn-secondary";
+      button.id = "btn-remove-datasource";
+      button.textContent = "Remove data source";
+      button.addEventListener("click", function() { removeDataSource(); });
+      return button;
+    }
+
+    function fillDatasourceFields(root, source) {
+      if (source.description) {
+        var description = document.createElement("p");
+        description.className = "hint";
+        description.textContent = source.description;
+        root.appendChild(description);
       }
-      if (!adapter) {
-        var empty = document.createElement("p");
-        empty.className = "hint";
-        empty.textContent = "Load an adapter to set its connection.";
-        root.appendChild(empty);
-        return;
-      }
-      if (adapter.missing) {
+      if (source.missing) {
         var missing = document.createElement("p");
         missing.className = "hint";
-        missing.textContent = "The adapter file is missing. Remove it and load it again.";
+        missing.textContent = "The adapter file is missing. Remove this data source, or install the adapter again.";
         root.appendChild(missing);
         return;
       }
-      var values = adapterState.values[adapter.id] || {};
-      (adapter.settings || []).forEach(function(field) {
-        var wrap = document.createElement("div");
-        wrap.className = "field";
-        var label = document.createElement("label");
-        label.htmlFor = "adapter-field-" + field.key;
-        label.textContent = field.label || field.key;
-        var input = document.createElement("input");
-        input.className = "adapter-input";
-        input.id = "adapter-field-" + field.key;
-        input.type = field.type === "password" ? "password" : (field.type === "url" ? "url" : "text");
-        if (input.type === "password") input.autocomplete = "off";
-        if (field.placeholder) input.placeholder = field.placeholder;
-        input.value = values[field.key] != null ? values[field.key] : "";
-        wrap.appendChild(label);
-        wrap.appendChild(input);
-        if (field.hint) {
-          var hint = document.createElement("p");
-          hint.className = "hint";
-          hint.textContent = field.hint;
-          wrap.appendChild(hint);
+      (source.settings || []).forEach(function(field) {
+        root.appendChild(renderSettingField(source, field));
+      });
+    }
+
+    function renderDatasourceFields() {
+      var root = document.getElementById("datasource-fields");
+      var source = selectedSource();
+      if (!root || !source) return;
+      root.innerHTML = "";
+      fillDatasourceFields(root, source);
+      root.appendChild(removeDatasourceButton());
+    }
+
+    function renderSettingField(source, field) {
+      var wrap = document.createElement("div");
+      wrap.className = "field";
+      var label = document.createElement("label");
+      label.htmlFor = "ds-field-" + field.key;
+      label.textContent = field.label || field.key;
+      wrap.appendChild(label);
+      if (field.type === "file") wrap.appendChild(renderFileSetting(source, field));
+      else if (field.type === "column") wrap.appendChild(renderColumnSetting(source, field));
+      else wrap.appendChild(renderTextSetting(source, field));
+      if (field.hint) {
+        var hint = document.createElement("p");
+        hint.className = "hint";
+        hint.textContent = field.hint;
+        wrap.appendChild(hint);
+      }
+      return wrap;
+    }
+
+    function renderTextSetting(source, field) {
+      var input = document.createElement("input");
+      input.className = "ds-input";
+      input.id = "ds-field-" + field.key;
+      input.type = field.type === "password" ? "password" : (field.type === "url" ? "url" : "text");
+      if (input.type === "password") input.autocomplete = "off";
+      if (field.placeholder) input.placeholder = field.placeholder;
+      input.value = source.values && source.values[field.key] != null ? source.values[field.key] : "";
+      return input;
+    }
+
+    function renderFileSetting(source, field) {
+      var row = document.createElement("div");
+      row.className = "path-row";
+      var input = document.createElement("input");
+      input.type = "text";
+      input.className = "ds-input";
+      input.id = "ds-field-" + field.key;
+      input.readOnly = true;
+      input.placeholder = "No file selected";
+      input.value = source.values && source.values[field.key] ? source.values[field.key] : "";
+      var browse = document.createElement("button");
+      browse.type = "button";
+      browse.className = "btn btn-secondary ds-input";
+      browse.textContent = "Browse";
+      browse.addEventListener("click", function() { browseDatasourceFile(source.id, field.key); });
+      var clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "btn btn-secondary ds-input";
+      clear.textContent = "Clear";
+      clear.addEventListener("click", function() { clearDatasourceFile(source.id, field.key); });
+      row.appendChild(input);
+      row.appendChild(browse);
+      row.appendChild(clear);
+      var status = fileHeaderState(source.id, field.key);
+      var hint = document.createElement("p");
+      hint.className = "hint";
+      hint.textContent = fileHint(status, !!input.value);
+      var holder = document.createElement("div");
+      holder.appendChild(row);
+      holder.appendChild(hint);
+      return holder;
+    }
+
+    function renderColumnSetting(source, field) {
+      var select = document.createElement("select");
+      select.className = "ds-input";
+      select.id = "ds-field-" + field.key;
+      var status = fileHeaderState(source.id, field.headers_from);
+      var names = Array.isArray(status.headers) ? status.headers.slice() : [];
+      var selected = source.values && source.values[field.key] != null ? String(source.values[field.key]) : "";
+      if (selected && names.indexOf(selected) < 0) names.unshift(selected);
+      var blank = document.createElement("option");
+      blank.value = "";
+      blank.textContent = "—";
+      select.appendChild(blank);
+      names.forEach(function(header) {
+        var option = document.createElement("option");
+        option.value = header;
+        option.textContent = header;
+        select.appendChild(option);
+      });
+      select.value = selected || "";
+      return select;
+    }
+
+    function renderRoles() {
+      var catalog = document.getElementById("catalog-data-source");
+      if (catalog) {
+        catalog.innerHTML = "";
+        var freeEdit = document.createElement("option");
+        freeEdit.value = "free_edit";
+        freeEdit.textContent = "Free edit mode";
+        catalog.appendChild(freeEdit);
+        (dsState.dataSources || []).forEach(function(source) {
+          if (source.missing || !supportsActions(source, ["catalog.search"])) return;
+          var option = document.createElement("option");
+          option.value = source.id;
+          option.textContent = source.name;
+          catalog.appendChild(option);
+        });
+        if (!dsState.freeEdit && dsState.catalogId && catalog.querySelector('option[value="' + dsState.catalogId + '"]')) {
+          catalog.value = dsState.catalogId;
+        } else {
+          catalog.value = "free_edit";
+          dsState.freeEdit = true;
         }
-        root.appendChild(wrap);
+      }
+      updateCatalogChoiceHint();
+    }
+
+    function updateCatalogChoiceHint() {
+      var hint = document.getElementById("catalog-choice-hint");
+      if (!hint) return;
+      if (dsState.freeEdit) {
+        hint.textContent = "Arbitrary rule values. Product lookup and offer calls are off.";
+        return;
+      }
+      var source = sourceById(dsState.catalogId);
+      if (source && supportsActions(source, ["orders.load", "orders.export"])) {
+        hint.textContent = "Searches products and checks codes. Offer lines are read and updated through this data source.";
+      } else {
+        hint.textContent = "Searches products and checks codes. This data source does not read or update offers.";
+      }
+    }
+
+    function onCatalogChoiceChange() {
+      collectRoleIds();
+      updateFreeEditModeUi();
+      updateCatalogChoiceHint();
+    }
+
+    function renderInstalledAdapters() {
+      var list = document.getElementById("installed-adapters");
+      if (!list) return;
+      list.innerHTML = "";
+      var installed = (dsState.installed || []).filter(function(adapter) { return adapter; });
+      if (!installed.length) {
+        var empty = document.createElement("p");
+        empty.className = "hint";
+        empty.textContent = "No plugin installed.";
+        list.appendChild(empty);
+        return;
+      }
+      installed.forEach(function(adapter) {
+        var row = document.createElement("div");
+        row.className = "path-row";
+        var label = document.createElement("span");
+        label.textContent = (adapter.name || adapter.id) + (adapter.missing ? " (file missing)" : (adapter.version ? " " + adapter.version : ""));
+        row.appendChild(label);
+        if (adapter.id !== "csv") {
+          var button = document.createElement("button");
+          button.type = "button";
+          button.className = "btn btn-secondary ds-input";
+          button.textContent = "Remove";
+          button.addEventListener("click", function() { removeAdapter(adapter.id); });
+          row.appendChild(button);
+        }
+        list.appendChild(row);
+      });
+    }
+
+    function renderAvailableAdapters() {
+      var root = document.getElementById("available-adapters");
+      if (!root) return;
+      root.innerHTML = "";
+      var items = dsState.available || [];
+      if (!items.length) return;
+      var title = document.createElement("div");
+      title.className = "step-title";
+      title.textContent = "Available";
+      root.appendChild(title);
+      items.forEach(function(plugin) {
+        var row = document.createElement("div");
+        row.className = "path-row";
+        var label = document.createElement("span");
+        label.textContent = plugin.name + (plugin.version ? " " + plugin.version : "");
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn btn-secondary bundled-load ds-input";
+        button.textContent = "Load";
+        button.addEventListener("click", function(event) {
+          if (event && event.preventDefault) event.preventDefault();
+          loadBundledAdapter(plugin.id);
+        });
+        row.appendChild(label);
+        row.appendChild(button);
+        root.appendChild(row);
       });
     }
 
     function renderLegacyHint() {
       var el = document.getElementById("legacy-filemaker-hint");
-      if (el) el.hidden = !adapterState.legacyFilemakerPending;
+      if (el) el.hidden = !dsState.legacyFilemakerPending;
     }
 
-    function renderCatalogSource(source) {
-      var sel = document.getElementById("catalog_source");
-      if (!sel) return;
-      var desired = source == null ? adapterState.catalogSource : source;
-      desired = desired === "csv" ? "csv" : "api";
-      var active = activeAdapter();
-      var readable = active && !active.missing;
-      sel.innerHTML = "";
-      var csv = document.createElement("option");
-      csv.value = "csv";
-      csv.textContent = "CSV";
-      sel.appendChild(csv);
-      if (readable) {
-        var api = document.createElement("option");
-        api.value = "api";
-        api.textContent = active.name;
-        sel.appendChild(api);
-      } else if (desired === "api") {
-        var pending = document.createElement("option");
-        pending.value = "api";
-        pending.textContent = "API adapter (not loaded)";
-        sel.appendChild(pending);
-      }
-      sel.value = desired === "api" && sel.querySelector('option[value="api"]') ? "api" : "csv";
-      adapterState.catalogSource = sel.value;
-      var hint = document.getElementById("catalog-source-hint");
-      if (!hint) return;
-      if (readable) {
-        hint.textContent = "Supplies products for search and code validation. Orders are read and updated through " + active.name + ".";
-      } else {
-        hint.textContent = "Load an API adapter to search a remote catalog and to read or update orders. CSV stays available for the catalog.";
-      }
-    }
-
-    function renderAdapterUi() {
-      renderAdapterList();
-      renderAdapterFields();
+    function renderDatasourceUi() {
+      renderDatasourceList();
+      renderAddAdapterChoices();
+      renderDatasourceFields();
+      renderRoles();
+      renderInstalledAdapters();
+      renderAvailableAdapters();
       renderLegacyHint();
-      renderCatalogSource(adapterState.catalogSource);
     }
 
-    function collectAdapterValues() {
-      var id = adapterState.activeId;
-      var adapter = activeAdapter();
-      if (id && adapter && !adapter.missing) {
-        var values = Object.assign({}, adapterState.values[id] || {});
-        (adapter.settings || []).forEach(function(field) {
-          var input = document.getElementById("adapter-field-" + field.key);
-          if (input) values[field.key] = input.value.trim();
-        });
-        adapterState.values[id] = values;
-      }
-      return cloneAdapterValues(adapterState.values);
+    function selectDataSource(id) {
+      collectDatasourceValues();
+      collectRoleIds();
+      dsState.selectedId = dsState.selectedId === id ? "" : id;
+      renderDatasourceUi();
+      updateFreeEditModeUi();
     }
 
-    function setActiveAdapter(id) {
-      collectAdapterValues();
-      adapterState.activeId = id;
-      renderAdapterFields();
-      renderCatalogSource(adapterState.catalogSource);
-      updateCatalogSourceUi();
+    function isFreeEditMode() {
+      var catalog = document.getElementById("catalog-data-source");
+      if (catalog) return catalog.value === "free_edit";
+      return !!dsState.freeEdit;
     }
 
-    function getCatalogSource() {
-      return adapterState.catalogSource === "csv" ? "csv" : "api";
-    }
-
-    function onCatalogSourceChange() {
-      var sel = document.getElementById("catalog_source");
-      adapterState.catalogSource = sel && sel.value === "csv" ? "csv" : "api";
-      updateCatalogSourceUi();
-    }
-
-    function setCsvHeaderHint(error) {
-      var hint = document.getElementById("csv-header-hint");
-      var pathEl = document.getElementById("catalog_csv_path");
-      if (!hint) return;
-      var hasPath = pathEl && pathEl.value.trim();
-      if (!hasPath) hint.textContent = "Choose a CSV file.";
-      else if (error === "missing") hint.textContent = "CSV file was not found.";
-      else if (error === "invalid") hint.textContent = "Could not read the CSV header.";
-      else hint.textContent = "Column lists use the first row of this file.";
-    }
-
-    function currentCsvFields() {
-      var fields = {};
-      CSV_FIELDS.forEach(function(field) {
-        var el = document.getElementById("csv-field-" + field);
-        fields[field] = el ? el.value : "";
-      });
-      return fields;
-    }
-
-    function renderFieldMapping(headers, fields) {
-      var names = Array.isArray(headers) ? headers.slice() : [];
-      var chosen = fields || {};
-      CSV_FIELDS.forEach(function(field) {
-        var sel = document.getElementById("csv-field-" + field);
-        if (!sel) return;
-        var selected = chosen[field] != null ? String(chosen[field]) : "";
-        var options = names.slice();
-        if (selected && options.indexOf(selected) < 0) options.unshift(selected);
-        sel.innerHTML = "";
-        var blank = document.createElement("option");
-        blank.value = "";
-        blank.textContent = "—";
-        sel.appendChild(blank);
-        options.forEach(function(header) {
-          var opt = document.createElement("option");
-          opt.value = header;
-          opt.textContent = header;
-          sel.appendChild(opt);
-        });
-        sel.value = selected || "";
-      });
-    }
-
-    function collectCsvFields() {
-      var fields = currentCsvFields();
-      if (getCatalogSource() === "csv" && !fields.code) {
-        throw new Error("Choose the CSV column for the product code.");
-      }
-      return fields;
-    }
-
-    function updateCatalogSourceUi() {
-      var freeEditMode = document.getElementById("free_edit_mode").checked;
-      var adapterInputs = document.querySelectorAll(".adapter-input");
-      for (var i = 0; i < adapterInputs.length; i++) adapterInputs[i].disabled = freeEditMode;
-      var loadBtn = document.getElementById("btn-load-adapter");
-      if (loadBtn) loadBtn.disabled = freeEditMode;
-      var removeBtn = document.getElementById("btn-remove-adapter");
-      if (removeBtn) removeBtn.disabled = freeEditMode || !adapterState.activeId;
-      var sourceEl = document.getElementById("catalog_source");
-      if (sourceEl) sourceEl.disabled = freeEditMode;
-      var validateEl = document.getElementById("catalog_validate_codes");
-      if (validateEl) validateEl.disabled = freeEditMode;
+    function updateFreeEditModeUi() {
+      // Free edit mode only affects lookup. Adding, editing and removing data sources stays available.
+      var freeEditMode = isFreeEditMode();
+      dsState.freeEdit = freeEditMode;
+      var addBtn = document.getElementById("btn-add-datasource");
+      var adapterChoices = document.getElementById("new-datasource-adapter");
+      if (addBtn) addBtn.disabled = !adapterChoices || !adapterChoices.options.length;
+      var removeBtn = document.getElementById("btn-remove-datasource");
+      if (removeBtn) removeBtn.disabled = !dsState.selectedId;
       var unitInputs = document.querySelectorAll("#unit-map-body input");
       for (var u = 0; u < unitInputs.length; u++) unitInputs[u].disabled = freeEditMode;
-      ["btn-browse-csv", "btn-clear-csv"].forEach(function(id) {
-        var el = document.getElementById(id);
-        if (el) el.disabled = freeEditMode;
-      });
-      var csvFields = document.querySelectorAll(".csv-field");
-      for (var c = 0; c < csvFields.length; c++) csvFields[c].disabled = freeEditMode;
     }
 
-    function updateFreeEditModeUi() { updateCatalogSourceUi(); }
+    function bridgeReady(name) {
+      return typeof sketchup !== "undefined" && typeof sketchup[name] === "function";
+    }
 
-    function loadAdapter() {
-      if (typeof sketchup === "undefined" || !sketchup.load_api_adapter) {
-        showSaveError("Plugin bridge not available.", "api");
+    function addDataSource() {
+      var nameEl = document.getElementById("new-datasource-name");
+      var adapterEl = document.getElementById("new-datasource-adapter");
+      var name = nameEl ? nameEl.value.trim() : "";
+      var adapterId = adapterEl ? adapterEl.value : "";
+      if (!name) {
+        showSaveError("Enter a name for the data source.", "datasources");
         return;
       }
-      collectAdapterValues();
-      sketchup.load_api_adapter();
+      if (!adapterId) {
+        showSaveError("Install a plugin on the Plugins tab before adding a data source.", "plugins");
+        return;
+      }
+      if (!bridgeReady("add_data_source")) {
+        showSaveError("Plugin bridge not available. Reload MaxxBOM, then open settings again.", "datasources");
+        return;
+      }
+      collectDatasourceValues();
+      collectRoleIds();
+      sketchup.add_data_source(encodeJson({ name: name, adapter_id: adapterId }));
     }
 
-    function removeAdapter() {
-      var id = adapterState.activeId;
-      if (!id) return;
-      var adapter = adapterById(id);
+    function removeDataSource() {
+      var source = selectedSource();
+      if (!source) return;
+      if (!window.confirm("Remove the " + source.name + " data source?")) return;
+      if (!bridgeReady("remove_data_source")) {
+        showSaveError("Plugin bridge not available.", "datasources");
+        return;
+      }
+      sketchup.remove_data_source(source.id);
+    }
+
+    function browseDatasourceFile(id, key) {
+      if (!bridgeReady("pick_datasource_file")) {
+        showSaveError("Plugin bridge not available.", "datasources");
+        return;
+      }
+      collectDatasourceValues();
+      sketchup.pick_datasource_file(encodeJson({ id: id, key: key }));
+    }
+
+    function clearDatasourceFile(id, key) {
+      var source = sourceById(id);
+      if (!source) return;
+      collectDatasourceValues();
+      source.values[key] = "";
+      if (!dsState.fileHeaders[id]) dsState.fileHeaders[id] = {};
+      dsState.fileHeaders[id][key] = { headers: [], error: null };
+      (source.settings || []).forEach(function(field) {
+        if (field.type === "column" && field.headers_from === key) source.values[field.key] = "";
+      });
+      renderDatasourceFields();
+      updateFreeEditModeUi();
+    }
+
+    window.onDatasourceFilePicked = function(data) {
+      if (!data) return;
+      var source = sourceById(data.id);
+      if (!source) return;
+      collectDatasourceValues();
+      var previous = source.values[data.key] || "";
+      source.values[data.key] = data.path || "";
+      if (!dsState.fileHeaders[data.id]) dsState.fileHeaders[data.id] = {};
+      dsState.fileHeaders[data.id][data.key] = { headers: data.headers || [], error: data.error || null };
+      if ((data.path || "") !== previous) {
+        var headers = data.headers || [];
+        (source.settings || []).forEach(function(field) {
+          if (field.type !== "column" || field.headers_from !== data.key) return;
+          if (headers.indexOf(source.values[field.key] || "") < 0) source.values[field.key] = "";
+        });
+      }
+      renderDatasourceFields();
+      updateFreeEditModeUi();
+    };
+
+    function loadAdapter() {
+      if (loadAdapter.busy) return;
+      loadAdapter.busy = true;
+      setTimeout(function() { loadAdapter.busy = false; }, 500);
+      showMessage("Choose the plugin file…", false);
+      showTab("plugins");
+      if (!bridgeReady("load_api_adapter")) {
+        showSaveError("Plugin bridge not available. Reload MaxxBOM, then open settings again.", "plugins");
+        return;
+      }
+      collectDatasourceValues();
+      collectRoleIds();
+      sketchup.load_api_adapter("");
+    }
+
+    function loadBundledAdapter(id) {
+      if (loadBundledAdapter.busy) return;
+      loadBundledAdapter.busy = true;
+      setTimeout(function() { loadBundledAdapter.busy = false; }, 500);
+      showMessage("Loading " + (id || "plugin") + "…", false);
+      showTab("plugins");
+      if (!bridgeReady("load_bundled_api_adapter")) {
+        showSaveError("Plugin bridge not available. Reload MaxxBOM, then open settings again.", "plugins");
+        return;
+      }
+      collectDatasourceValues();
+      collectRoleIds();
+      sketchup.load_bundled_api_adapter(id || "");
+    }
+
+    function removeAdapter(id) {
+      if (id === "csv") return;
+      var installed = dsState.installed || [];
+      var adapter = null;
+      for (var i = 0; i < installed.length; i++) {
+        if (installed[i].id === id) adapter = installed[i];
+      }
       var name = adapter && adapter.name ? adapter.name : id;
-      if (!window.confirm("Remove the " + name + " adapter?")) return;
-      if (typeof sketchup === "undefined" || !sketchup.remove_api_adapter) {
-        showSaveError("Plugin bridge not available.", "api");
+      if (!window.confirm("Remove the " + name + " plugin? Its data sources will be removed too.")) return;
+      if (!bridgeReady("remove_api_adapter")) {
+        showSaveError("Plugin bridge not available.", "plugins");
         return;
       }
       sketchup.remove_api_adapter(id);
     }
 
-    function browseCatalogCsv() {
-      if (typeof sketchup !== "undefined" && sketchup.pick_catalog_csv) sketchup.pick_catalog_csv();
-    }
-
-    function clearCatalogCsv() {
-      if (typeof sketchup !== "undefined" && sketchup.preview_catalog_csv) sketchup.preview_catalog_csv("");
-    }
-
-    window.onCatalogCsvPicked = function(data) {
-      var pathEl = document.getElementById("catalog_csv_path");
-      var previous = pathEl ? pathEl.value : "";
-      var next = data && data.path != null ? (data.path || "") : previous;
-      if (pathEl && data && data.path != null) pathEl.value = next;
-      setCsvHeaderHint(data && data.error);
-      var fields = currentCsvFields();
-      var headers = (data && data.headers) || [];
-      if (next !== previous) {
-        CSV_FIELDS.forEach(function(field) {
-          if (headers.indexOf(fields[field]) < 0) fields[field] = "";
-        });
-      }
-      renderFieldMapping(headers, fields);
-      updateCatalogSourceUi();
-    };
-
     window.onAdaptersChanged = function(data) {
-      if (!data) return;
-      if (data.error) {
-        showSaveError(data.message || "Could not change adapters.", "api");
-        return;
+      try {
+        if (!data) return;
+        if (data.cancelled) {
+          var msgEl = document.getElementById("message");
+          if (msgEl) msgEl.style.display = "none";
+          return;
+        }
+        if (data.error) {
+          showSaveError(data.message || "Could not change plugins or data sources.");
+          return;
+        }
+        var previousSources = cloneSources(dsState.dataSources);
+        var previousHeaders = dsState.fileHeaders;
+        collectRoleIds();
+        var keepFree = dsState.freeEdit;
+        var previousCatalog = dsState.catalogId;
+        applyDatasourcePayload(data);
+        keepLocalEdits(previousSources, previousHeaders);
+        dsState.freeEdit = keepFree;
+        if (previousCatalog === "" || sourceById(previousCatalog)) {
+          dsState.catalogId = previousCatalog;
+        } else {
+          // The chosen product lookup was removed: fall back to free edit mode.
+          dsState.catalogId = "";
+          dsState.freeEdit = true;
+        }
+        if (data.added_id) dsState.selectedId = data.added_id;
+        if (data.removed_datasource_id && dsState.selectedId === data.removed_datasource_id) dsState.selectedId = "";
+        if (dsState.selectedId && !sourceById(dsState.selectedId)) dsState.selectedId = "";
+        var nameEl = document.getElementById("new-datasource-name");
+        if (data.added_id && nameEl) nameEl.value = "";
+        renderDatasourceUi();
+        updateFreeEditModeUi();
+        if (data.message) showMessage(data.message, false);
+      } catch (e) {
+        showSaveError(e && e.message ? e.message : String(e));
       }
-      var previous = collectAdapterValues();
-      var loadedId = data.loaded_id || "";
-      applyAdapterPayload(data);
-      Object.keys(previous).forEach(function(id) {
-        if (id === loadedId) return;
-        if (data.removed_id && id === data.removed_id) return;
-        if (adapterState.values[id] && previous[id]) adapterState.values[id] = previous[id];
-      });
-      renderAdapterUi();
-      updateCatalogSourceUi();
-      if (data.message) showMessage(data.message, false);
     };
 
     window.onSettingsLoaded = function(data) {
       if (!data) return;
-      applyAdapterPayload(data);
-      adapterState.catalogSource = data.catalog_source === "csv" ? "csv" : "api";
-      var el = document.getElementById("catalog_validate_codes");
-      if (el) el.checked = data.catalog_validate_codes !== false && data.catalog_validate_codes !== "false";
-      el = document.getElementById("free_edit_mode");
-      if (el) el.checked = data.free_edit_mode === true || data.free_edit_mode === "true";
-      el = document.getElementById("catalog_csv_path");
-      if (el) el.value = data.catalog_csv_path || "";
+      applyDatasourcePayload(data);
+      dsState.freeEdit = data.free_edit_mode === true || data.free_edit_mode === "true";
+      if (dsState.selectedId && !sourceById(dsState.selectedId)) dsState.selectedId = "";
+      var devMode = data.dev_mode === true || data.dev_mode === "true";
+      var debugStep = document.getElementById("debug-facility-step");
+      if (debugStep) debugStep.hidden = !devMode;
+      var el = document.getElementById("debug_facility");
+      if (el) el.checked = data.debug_facility !== false && data.debug_facility !== "false";
       el = document.getElementById("quotation_length_unit");
       if (el) el.value = data.quotation_length_unit || "m";
       renderUnitMap(data.unit_map);
       syncQuotationExportFields();
-      renderFieldMapping(data.catalog_csv_headers, data.catalog_csv_fields);
-      setCsvHeaderHint(data.catalog_csv_header_error);
-      renderAdapterUi();
-      updateCatalogSourceUi();
+      renderDatasourceUi();
+      updateFreeEditModeUi();
     };
 
     function showMessage(text, isError) {
@@ -622,45 +880,40 @@
         return;
       }
       var unitMap = null;
-      var csvFields = null;
       try {
         unitMap = collectUnitMap();
       } catch (e) {
         showSaveError(e.message || String(e), "general");
         return;
       }
-      try {
-        csvFields = collectCsvFields();
-      } catch (e) {
-        showSaveError(e.message || String(e), "csv");
-        return;
-      }
+      collectDatasourceValues();
+      collectRoleIds();
+      var values = {};
+      (dsState.dataSources || []).forEach(function(source) {
+        values[source.id] = Object.assign({}, source.values || {});
+      });
       var payload = {
-        active_api_adapter: adapterState.activeId || "",
-        api_adapter_values: collectAdapterValues(),
-        catalog_validate_codes: document.getElementById("catalog_validate_codes").checked,
-        catalog_source: getCatalogSource(),
-        free_edit_mode: document.getElementById("free_edit_mode").checked,
+        data_source_values: values,
+        catalog_data_source: dsState.catalogId || "",
+        free_edit_mode: !!dsState.freeEdit,
         quotation_length_unit: document.getElementById("quotation_length_unit").value,
-        unit_map: unitMap,
-        catalog_csv_path: document.getElementById("catalog_csv_path").value.trim(),
-        catalog_csv_fields: csvFields
+        unit_map: unitMap
       };
+      var debugStep = document.getElementById("debug-facility-step");
+      if (debugStep && !debugStep.hidden) {
+        var debugEl = document.getElementById("debug_facility");
+        payload.debug_facility = !!(debugEl && debugEl.checked);
+      }
       try {
-        var b64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-        sketchup.save_settings(b64);
+        sketchup.save_settings(encodeJson(payload));
       } catch (e) {
         showSaveError("Failed to encode settings: " + (e.message || e));
       }
     }
 
     window.onSettingsSaved = function(data) {
-      if (data && data.error) {
-        showMessage(data.message || "Save failed.", true);
-        if (data.message && data.message.indexOf("CSV column") >= 0) showTab("csv");
-      } else {
-        showMessage("Settings saved.", false);
-      }
+      if (data && data.error) showMessage(data.message || "Save failed.", true);
+      else showMessage("Settings saved.", false);
     };
 
     function closeDialog() {
@@ -670,9 +923,8 @@
     (function init() {
       showTab("general");
       renderUnitMap(null);
-      renderFieldMapping([], null);
-      renderAdapterUi();
-      updateCatalogSourceUi();
+      renderDatasourceUi();
+      updateFreeEditModeUi();
       function loadSettings() {
         if (typeof sketchup !== "undefined" && sketchup.get_settings) sketchup.get_settings();
       }
@@ -682,3 +934,4 @@
   </script>
 </body>
 </html>
+

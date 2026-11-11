@@ -10,10 +10,12 @@ module Logimaxx
       commands.rb
       ui.rb
       ui/adapters.rb
-      ui/attributes.rb
+      ui/datasources.rb
+      ui/rules.rb
       ui/bom_exporter.rb
       ui/settings.rb
       dev.rb
+      bridge.rb
       main.rb
     ].freeze
 

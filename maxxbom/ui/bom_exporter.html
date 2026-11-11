@@ -36,6 +36,8 @@
     tr.bom-selectable:hover { background: #e3f2fd; }
     tr.offer-only-row td { background: #fff8e1; color: #6b4f00; }
     .qty-export-input { width: 110px; padding: 4px 6px; font-size: 12px; border: 1px solid #ccc; border-radius: 3px; }
+    th.col-price, td.col-price, th.col-total, td.col-total { text-align: right; white-space: nowrap; }
+    #report-table.prices-off .col-price, #report-table.prices-off .col-total { display: none; }
     .empty { color: #888; padding: 24px; text-align: center; }
     .error { color: #b00; }
     .section-title { font-size: 13px; margin: 16px 0 8px; color: #333; }
@@ -123,7 +125,7 @@
   <div id="section-with-rules" style="display: none;">
     <h3 class="section-title">Components with BOM rules</h3>
     <div class="table-wrap">
-      <table id="report-table">
+      <table id="report-table" class="prices-off">
         <thead>
           <tr>
             <th class="exportable-th" title="Toggle all exportable flags in this list">
@@ -135,6 +137,8 @@
             <th>Quantity</th>
             <th>In offer</th>
             <th>Qty to export</th>
+            <th class="col-price">Unit price</th>
+            <th class="col-total" title="Unit price × quantity to export. The CSV total is per material, after quantities of the same material are added.">Total</th>
           </tr>
         </thead>
         <tbody id="report-body"></tbody>
@@ -213,11 +217,11 @@
     var apiAdapterName = "";
     var exportQtyOverridesByKey = {};
     var scanDone = false;
+    var catalogCategoryMapped = true;
+    var catalogPriceMapped = false;
+    var catalogPrices = {};
 
     var exportDebugEnabled = false;
-    var exportDebugImportUrl = "";
-    var exportDebugOfferLinesUrl = "";
-    var exportDebugKeySet = false;
     var unitMap = null;
 
     function setApiAdapterName(name) {
@@ -238,32 +242,6 @@
     function pluginUom(uom) {
       if (typeof UnitMap === "undefined") return (uom || "").toString();
       return UnitMap.toPlugin(uom, unitMap);
-    }
-
-    function redactExportSecrets(value) {
-      var text = typeof value === "string" ? value : JSON.stringify(value);
-      return String(text == null ? "" : text)
-        .replace(/([?&]apiKey=)[^&\s"]*/gi, "$1***")
-        .replace(/("apiKey"\s*:\s*")[^"]*/gi, "$1***")
-        .replace(/(Authorization"\s*:\s*")[^"]*/gi, "$1***");
-    }
-
-    function clipExportText(value, max) {
-      var text = String(value == null ? "" : value);
-      if (text.length <= max) return text;
-      return text.slice(0, max) + "… (" + text.length + " chars)";
-    }
-
-    function summarizeExportResponse(data) {
-      if (Array.isArray(data)) return "array len=" + data.length;
-      if (!data || typeof data !== "object") return typeof data;
-      var summary = "keys=" + Object.keys(data).slice(0, 12).join(",");
-      var scriptResult = data.scriptResult;
-      if (scriptResult && typeof scriptResult === "object") {
-        summary += " scriptResult.keys=" + Object.keys(scriptResult).join(",");
-        if (Array.isArray(scriptResult.result)) summary += " result.len=" + scriptResult.result.length;
-      }
-      return summary;
     }
 
     function syncExportDebugDock() {
@@ -294,9 +272,9 @@
         "project=" + (offerId || "(empty)"),
         "scan=" + (scanDone ? "done" : "idle") + " rules=" + reportRows.length + " without=" + reportRowsWithoutRules.length + " geometry=" + reportRowsGeometryOnly.length + " pieces=" + pieceRows.length,
         "offer=" + offerState,
-        "import=" + redactExportSecrets(exportDebugImportUrl || "(not loaded)"),
-        "offerLines=" + redactExportSecrets(exportDebugOfferLinesUrl || "(not loaded)"),
-        "key=" + (exportDebugKeySet ? "set" : "missing")
+        "adapter=" + (apiAdapterName || "(none)"),
+        "load=" + (Maxx.ready("orders.load") ? "ready" : "not ready"),
+        "export=" + (Maxx.ready("orders.export") ? "ready" : "not ready")
       ].join("\n");
       syncExportDebugDock();
     }
@@ -328,17 +306,20 @@
     window.addEventListener("resize", syncExportDebugDock);
 
     function rememberExportApiSettings(data) {
-      exportDebugImportUrl = (data && data.import_api_url) ? String(data.import_api_url).trim() : "";
-      exportDebugOfferLinesUrl = (data && data.offer_lines_api_url) ? String(data.offer_lines_api_url).trim() : "";
-      exportDebugKeySet = !!(data && data.import_api_key && String(data.import_api_key).trim());
+      Maxx.configure({
+        catalog: data && data.catalog,
+        orders: data && data.orders
+      });
       if (data && data.unit_map) unitMap = data.unit_map;
       renderExportDebugStatus();
+      if (scanDone && exportType !== "pieces") fillCatalogPrices();
     }
 
 
     window.onInitialState = function(data) {
       var el = document.getElementById("offer_id");
       if (el && data && data.project_id != null) el.value = data.project_id || "";
+      rememberExportApiSettings(data);
       freeEditModeEnabled = !!(data && (data.free_edit_mode === true || data.free_edit_mode === "true"));
       setApiAdapterName(data && data.api_adapter_name);
       if (data && data.unit_map) unitMap = data.unit_map;
@@ -494,6 +475,7 @@
         reportRows = (payload && payload.rows) ? payload.rows : [];
         reportRowsWithoutRules = (payload && payload.rows_without_rules) ? payload.rows_without_rules : [];
         reportRowsGeometryOnly = (payload && payload.rows_geometry_only) ? payload.rows_geometry_only : [];
+        applyCatalogPrices(payload);
         var hasPieceRows = !!(payload && Object.prototype.hasOwnProperty.call(payload, "piece_rows"));
         if (hasPieceRows) {
           pieceRows = Array.isArray(payload.piece_rows) ? payload.piece_rows : [];
@@ -520,6 +502,7 @@
         renderExportDebugStatus();
         var resultCount = exportType === "pieces" ? pieceRows.length : totalLines;
         document.getElementById("empty-msg").style.display = resultCount === 0 ? "block" : "none";
+        fillCatalogPrices(payload && payload.export_type === "pieces");
       } catch (e) {
         console.error("[BOM Export] onExportResult error", e);
         logExportDebug("scan render error " + (e && e.message ? e.message : e));
@@ -602,7 +585,7 @@
 
     function getExportLineKey(r) {
       if (!r) return "";
-      return makeLineKey({ code: r.code, uom: r.uom, category: r.category });
+      return csvAggregateKey(r);
     }
 
     function exportQtyDefaultForRow(r) {
@@ -619,6 +602,118 @@
       var n = parseExportQtyLoose(el.value);
       if (n == null) delete exportQtyOverridesByKey[key];
       else exportQtyOverridesByKey[key] = n;
+      updateRowTotal(el);
+    }
+
+    function applyCatalogPrices(payload) {
+      catalogCategoryMapped = !(payload && payload.catalog_category_mapped === false);
+      catalogPriceMapped = !!(payload && (payload.catalog_price_mapped === true || payload.catalog_price_mapped === "true"));
+      catalogPrices = {};
+      var table = document.getElementById("report-table");
+      if (table) table.classList.toggle("prices-off", !catalogPriceMapped);
+    }
+
+    // Same reading as the old catalog price: a blank cell is empty, one comma is
+    // the decimal mark, and when both separators appear the last one is decimal.
+    function parseCatalogPrice(value) {
+      var text = value == null ? "" : String(value).trim().replace(/\s+/g, "");
+      if (!text) return null;
+      text = text.replace(/[^\d,.\-]/g, "");
+      if (!text || text === "-") return null;
+      var comma = text.lastIndexOf(",");
+      var dot = text.lastIndexOf(".");
+      if (comma >= 0 && dot >= 0) {
+        var decimalIsComma = comma > dot;
+        text = text.split(decimalIsComma ? "." : ",").join("");
+        if (decimalIsComma) text = text.replace(",", ".");
+      } else if (comma >= 0) {
+        text = text.replace(/,/g, ".");
+      }
+      if (!/^-?\d+(\.\d+)?$/.test(text)) return null;
+      var number = parseFloat(text);
+      if (isNaN(number)) return null;
+      return Math.round(number * 10000) / 10000;
+    }
+
+    function fillCatalogPrices(skip) {
+      if (skip || !catalogPriceMapped) return Promise.resolve();
+      var seen = {};
+      var codes = [];
+      reportRows.forEach(function(row) {
+        var code = row && row.code != null ? String(row.code).trim() : "";
+        if (!code || seen[code]) return;
+        seen[code] = true;
+        codes.push(code);
+      });
+      if (!codes.length || !Maxx.ready("catalog.search")) return Promise.resolve();
+      return Maxx.call("catalog.search", { codes: codes }).then(function(result) {
+        if (!result || !result.ok) {
+          logExportDebug("prices " + ((result && result.error) || "failed"));
+          return;
+        }
+        catalogPrices = {};
+        (result.items || []).forEach(function(item) {
+          var code = item && item.code ? String(item.code).trim() : "";
+          if (!code || Object.prototype.hasOwnProperty.call(catalogPrices, code)) return;
+          var price = parseCatalogPrice(item.price);
+          if (price != null) catalogPrices[code] = price;
+        });
+        renderTable(reportRows, "report-body", reportRowCells);
+      });
+    }
+
+    function catalogPriceForCode(code) {
+      if (!catalogPriceMapped) return null;
+      var key = (code || "").toString().trim();
+      if (!Object.prototype.hasOwnProperty.call(catalogPrices, key)) return null;
+      var n = catalogPrices[key];
+      return typeof n === "number" && !isNaN(n) ? n : null;
+    }
+
+    function roundMoney(n) {
+      return Math.round(n * 10000) / 10000;
+    }
+
+    function moneyTotal(qty, price) {
+      if (price == null) return null;
+      var q = typeof qty === "number" ? qty : parseExportQtyLoose(qty);
+      if (q == null) return null;
+      return roundMoney(q * price);
+    }
+
+    function formatExportNumber(value) {
+      if (value == null || value === "") return "";
+      var n = typeof value === "number" ? value : parseExportQtyLoose(value);
+      if (n == null) return "";
+      if (Number.isInteger(n)) return String(n);
+      return n.toFixed(4).replace(/\.?0+$/, "") || "0";
+    }
+
+    function updateRowTotal(input) {
+      if (!input || !input.closest) return;
+      var totalCell = input.closest("tr") && input.closest("tr").querySelector("td.col-total");
+      if (!totalCell) return;
+      var raw = totalCell.getAttribute("data-unit-price");
+      if (raw == null || raw === "") {
+        totalCell.textContent = "";
+        return;
+      }
+      var total = moneyTotal(input.value, parseExportQtyLoose(raw));
+      totalCell.textContent = total == null ? "" : formatQuantity(total);
+    }
+
+    function tagPriceCells(tr, price) {
+      var cells = tr.children;
+      if (cells[7]) cells[7].classList.add("col-price");
+      if (!cells[8]) return;
+      cells[8].classList.add("col-total");
+      if (price == null) cells[8].removeAttribute("data-unit-price");
+      else cells[8].setAttribute("data-unit-price", String(price));
+    }
+
+    function csvAggregateKey(item) {
+      var category = catalogCategoryMapped ? ((item && item.category) || "") : "";
+      return makeLineKey({ code: item && item.code, uom: item && item.uom, category: category });
     }
 
     function reportRowCells(r) {
@@ -628,6 +723,8 @@
       var overrideQty = exportQtyOverridesByKey[exportKey];
       var qtyToExport = overrideQty != null ? overrideQty : defaultQty;
       if (qtyToExport == null || qtyToExport === "\u2014") qtyToExport = "";
+      var price = catalogPriceForCode(r.code);
+      var total = moneyTotal(qtyToExport, price);
       return [
         exportableCell,
         escapeHtml(r.definition_name || ""),
@@ -636,7 +733,9 @@
         escapeHtml(quantityQtyUomDisplayForRow(r)),
         escapeHtml(offerQtyDisplayForRow(r)),
         "<input class=\"qty-export-input\" type=\"text\" data-export-key=\"" + escapeHtml(exportKey) + "\" " +
-          "value=\"" + escapeHtml(String(qtyToExport)) + "\" onclick=\"event.stopPropagation();\" oninput=\"onExportQtyInput(event)\" />"
+          "value=\"" + escapeHtml(String(qtyToExport)) + "\" onclick=\"event.stopPropagation();\" oninput=\"onExportQtyInput(event)\" />",
+        escapeHtml(price == null ? "" : formatQuantity(price)),
+        escapeHtml(total == null ? "" : formatQuantity(total))
       ];
     }
 
@@ -673,6 +772,7 @@
       displayRows.forEach(function(r) {
         var tr = document.createElement("tr");
         tr.innerHTML = "<td>" + (cellFn(r).join("</td><td>")) + "</td>";
+        tagPriceCells(tr, catalogPriceForCode(r.code));
         if (r._offerOnly) tr.classList.add("offer-only-row");
         makeRowSelectable(tr, r.select_entity_id);
         tbody.appendChild(tr);
@@ -781,6 +881,7 @@
       document.getElementById("status").textContent = "Running export…";
       document.getElementById("status").className = "status";
       scanDone = false;
+      applyCatalogPrices(null);
       updateLoadOfferButtonEnabled();
       syncActionButtons();
       // Reset table/input state on each scan so previous edits/offers aren't mixed in.
@@ -836,14 +937,14 @@
       var byKey = {};
       var exportableWithRules = reportRows.filter(isExportable);
       exportableWithRules.forEach(function(r) {
-        var key = makeLineKey({ code: r.code, uom: r.uom, category: r.category });
+        var key = csvAggregateKey(r);
         if (!key) return;
         if (!byKey[key]) {
           byKey[key] = {
             code: (r.code || "").toString().trim(),
             quantity: 0,
             uom: (r.uom || "pcs").toString().trim(),
-            category: (r.category || "").toString().trim()
+            category: catalogCategoryMapped ? (r.category || "").toString().trim() : ""
           };
         }
         var n = parseExportQtyLoose(r.quantity);
@@ -856,14 +957,20 @@
         return row;
       });
       var line = function(arr) { return arr.map(function(c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(","); };
-      var headers = ["code", "quantity", "uom", "category"];
+      var headers = ["code", "quantity", "uom"];
+      if (catalogCategoryMapped) headers.push("category");
+      if (catalogPriceMapped) headers.push("price", "total");
       var csv = line(headers) + "\n";
       aggregated.forEach(function(r) {
-        var qty = r.quantity;
-        if (Number.isInteger(qty)) qty = String(qty);
-        else if (typeof qty === "number") qty = qty.toFixed(4).replace(/\.?0+$/, "") || "0";
-        else qty = String(r.quantity);
-        csv += line([r.code || "", qty, externalUom(r.uom || "pcs"), r.category || ""]) + "\n";
+        var qty = formatExportNumber(r.quantity);
+        var cells = [r.code || "", qty, externalUom(r.uom || "pcs")];
+        if (catalogCategoryMapped) cells.push(r.category || "");
+        if (catalogPriceMapped) {
+          var price = catalogPriceForCode(r.code);
+          var total = price == null ? null : roundMoney(Number(r.quantity) * price);
+          cells.push(formatExportNumber(price), formatExportNumber(total));
+        }
+        csv += line(cells) + "\n";
       });
       logExportDebug("csv rows=" + aggregated.length);
       sketchup.save_bom_csv(csv);
@@ -941,22 +1048,6 @@
       });
     }
 
-    function buildOfferLinesUrl(offerLinesUrl, importUrl, loadSpec) {
-      if (!offerLinesUrl && !importUrl) return "";
-      var spec = loadSpec || {};
-      var template = spec.url || "{{offer_lines_url}}";
-      // Older profiles pointed load at the import URL and rewrote import-sketch.
-      if (offerLinesUrl && template.indexOf("{{offer_lines_url}}") < 0 && template.indexOf("{{import_url}}") >= 0) {
-        template = "{{offer_lines_url}}";
-      }
-      var url = ApiAdapter.interpolate(template, {
-        import_url: importUrl || "",
-        offer_lines_url: offerLinesUrl || ""
-      });
-      if (!offerLinesUrl && spec.replace && spec.replace.from) url = url.replace(spec.replace.from, spec.replace.to || "");
-      return url;
-    }
-
     function makeLineKey(item) {
       var code = ((item && item.code) || "").toString().trim();
       var uom = ((item && item.uom) || "").toString().trim();
@@ -986,24 +1077,6 @@
       return { idsByKey: idsByKey, qtyByKey: qtyByKey };
     }
 
-    function extractOfferLines(responseData, profile) {
-      if (!responseData || typeof responseData !== "object") return [];
-      var responseSpec = (profile.load && profile.load.response) || {};
-      var lines = ApiAdapter.get(responseData, responseSpec.items_path || "scriptResult.result", null);
-      (responseSpec.fallback_items_paths || ["result"]).some(function(path) {
-        if (Array.isArray(lines)) return true;
-        lines = ApiAdapter.get(responseData, path, null);
-        return Array.isArray(lines);
-      });
-      if (!Array.isArray(lines)) return [];
-      var fields = profile.fields || { id: "id", code: "code", quantity: "quantity", uom: "uom", category: "category" };
-      return lines.map(function(line) {
-        var item = ApiAdapter.mapFields(line, fields);
-        if (item) item.uom = pluginUom(item.uom);
-        return item;
-      });
-    }
-
     function attachExistingIds(items, idsByKey) {
       return (items || []).map(function(item) {
         var out = { code: item.code, quantity: item.quantity, uom: item.uom, category: item.category };
@@ -1011,10 +1084,6 @@
         if (id) out.id = id;
         return out;
       });
-    }
-
-    function fetchJsonResponse(url, payload, spec, apiKey, variables) {
-      return ApiAdapter.request(url, spec || {}, payload, { api_key: apiKey }, variables || {});
     }
 
     function normalizeQtyForCompare(q) {
@@ -1120,33 +1189,30 @@
       sketchup.get_plugin_settings();
     }
 
-    function doFetchOfferLines(data) {
-      rememberExportApiSettings(data);
-      var importUrl = (data && data.import_api_url) ? data.import_api_url.trim() : "";
-      var offerLinesUrl = (data && data.offer_lines_api_url) ? data.offer_lines_api_url.trim() : "";
-      if (!offerLinesUrl) {
-        logExportDebug("load offer aborted: offer lines URL missing");
-        alert("Please set the offer lines URL in Settings.");
+    function doFetchOfferLines() {
+      if (!Maxx.ready("orders.load")) {
+        logExportDebug("load offer aborted: adapter not ready");
+        alert("Load an API adapter and set its connection in Plugin Settings.");
         return;
       }
-      var importApiKey = (data && data.import_api_key) ? data.import_api_key.trim() : "";
-      var profile = ApiAdapter.parse(data && data.import_api_profile, {});
-      var loadSpec = Object.assign({}, profile, profile.load || {});
-      loadSpec.auth = (profile.load && profile.load.auth) || profile.auth;
       var offerId = document.getElementById("offer_id") ? document.getElementById("offer_id").value.trim() : "";
-      var getOfferLinesUrl = buildOfferLinesUrl(offerLinesUrl, importUrl, profile.load);
       var statusEl = document.getElementById("status");
       statusEl.textContent = "Loading offer lines…";
       statusEl.className = "status";
-      var loadPayload = {};
-      ApiAdapter.set(loadPayload, ((profile.load || {}).request || {}).offer_id_path || "offer_id", offerId);
-      logExportDebug("load offer " + String(loadSpec.method || "POST").toUpperCase() + " " + redactExportSecrets(getOfferLinesUrl || "(empty)") + " key=" + (importApiKey ? "set" : "missing") + " offer=" + offerId);
-      logExportDebug("  body " + clipExportText(redactExportSecrets(loadPayload), 500));
-      fetchJsonResponse(getOfferLinesUrl, loadPayload, loadSpec, importApiKey, { import_url: importUrl, offer_lines_url: offerLinesUrl, offer_id: offerId })
-        .then(function(existingRes) {
-          var lines = extractOfferLines(existingRes, profile);
-          logExportDebug("  ok lines=" + lines.length + " " + summarizeExportResponse(existingRes));
-          if (!lines.length) logExportDebug("  raw " + clipExportText(redactExportSecrets(existingRes), 1500));
+      logExportDebug("orders.load offer=" + offerId);
+      Maxx.call("orders.load", { offer_id: offerId })
+        .then(function(result) {
+          if (!result.ok) throw new Error(result.error || "Failed to load offer lines.");
+          var lines = (result.items || []).map(function(item) {
+            return {
+              id: item.id,
+              code: item.code,
+              quantity: item.quantity,
+              uom: pluginUom(item.uom),
+              category: item.category
+            };
+          });
+          logExportDebug("  ok lines=" + lines.length + (result.error ? " error=" + result.error : ""));
           var maps = buildOfferLineMaps(lines);
           offerLinesCache = {
             source: "api",
@@ -1168,19 +1234,12 @@
         });
     }
 
-    function doExportToApi(data) {
-      rememberExportApiSettings(data);
-      var importUrl = (data && data.import_api_url) ? data.import_api_url.trim() : "";
-      if (!importUrl) {
-        logExportDebug("api aborted: import URL missing");
-        alert("Please set the import URL in Settings.");
+    function doExportToApi() {
+      if (!Maxx.ready("orders.export")) {
+        logExportDebug("api aborted: adapter not ready");
+        alert("Load an API adapter and set its connection in Plugin Settings.");
         return;
       }
-      var importApiKey = (data && data.import_api_key) ? data.import_api_key.trim() : "";
-      var profile = ApiAdapter.parse(data && data.import_api_profile, {});
-      var exportSpec = Object.assign({}, profile, profile.export || {});
-      exportSpec.auth = (profile.export && profile.export.auth) || profile.auth;
-      var url = ApiAdapter.interpolate((profile.export || {}).url || "{{import_url}}", { import_url: importUrl });
       var offerId = document.getElementById("offer_id") ? document.getElementById("offer_id").value.trim() : "";
 
       var itemsAll = getAggregatedPayload();
@@ -1201,33 +1260,24 @@
         return qtyChanged(existingQty, item.quantity);
       });
 
-      var requestSpec = (profile.export && profile.export.request) || {};
-      var fields = profile.fields || { id: "id", code: "code", quantity: "quantity", uom: "uom", category: "category" };
       var outgoingItems = attachExistingIds(filteredItems, idsByKey).map(function(item) {
-        var source = {
+        var mapped = {
           code: item.code,
           quantity: item.quantity,
           uom: externalUom(item.uom),
-          category: item.category,
-          id: item.id
+          category: item.category
         };
-        var mapped = {};
-        Object.keys(fields).forEach(function(canonical) {
-          if (source[canonical] != null && source[canonical] !== "") ApiAdapter.set(mapped, fields[canonical], source[canonical]);
-        });
+        if (item.id) mapped.id = item.id;
         return mapped;
       });
-      var payload = {};
-      ApiAdapter.set(payload, requestSpec.items_path || "items", outgoingItems);
-      ApiAdapter.set(payload, requestSpec.offer_id_path || "offer_id", offerId);
       var statusEl = document.getElementById("status");
       statusEl.textContent = "Sending to API… (" + filteredItems.length + " line(s))";
       statusEl.className = "status";
-      logExportDebug("api " + String(exportSpec.method || "POST").toUpperCase() + " " + redactExportSecrets(url || "(empty)") + " key=" + (importApiKey ? "set" : "missing") + " changed=" + filteredItems.length + "/" + itemsAll.length);
-      logExportDebug("  body " + clipExportText(redactExportSecrets(payload), 1500));
-      fetchJsonResponse(url, payload, exportSpec, importApiKey, { import_url: importUrl, offer_id: offerId })
-        .then(function(res) {
-          logExportDebug("  ok " + summarizeExportResponse(res));
+      logExportDebug("orders.export offer=" + offerId + " changed=" + filteredItems.length + "/" + itemsAll.length);
+      Maxx.call("orders.export", { offer_id: offerId, items: outgoingItems })
+        .then(function(result) {
+          if (!result.ok) throw new Error(result.error || "API export failed.");
+          logExportDebug("  ok");
           statusEl.textContent = "Export to API completed successfully.";
           statusEl.className = "status";
           // Force the user to reload offer lines before exporting again.
@@ -1287,10 +1337,10 @@
       var use = pendingPluginSettingsUse || "import";
       pendingPluginSettingsUse = "import";
       if (use === "offer_fetch") {
-        doFetchOfferLines(data);
+        doFetchOfferLines();
         return;
       }
-      doExportToApi(data);
+      doExportToApi();
     };
 
     document.body.addEventListener("change", onExportableCheckboxChange);

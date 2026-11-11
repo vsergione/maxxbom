@@ -16,7 +16,7 @@ module Logimaxx
         end
 
         def self.opts
-          { width: 920, height: 520, title: "#{Logimaxx::MaxxBOM::DISPLAY_NAME} — Export" }
+          { width: 1040, height: 520, title: "#{Logimaxx::MaxxBOM::DISPLAY_NAME} — Export" }
         end
 
         BOM_RULES_DICT = "Cialona_BOM_Rules".freeze
@@ -36,16 +36,20 @@ module Logimaxx
           dialog.add_action_callback('set_project_id') { |_ctx, project_id| on_set_project_id(project_id) }
         end
 
+        # Refresh the export dialog after an adapter is loaded or removed.
+        def self.push_adapter_state
+          dialog = Logimaxx::MaxxBOM.dialogs[:export_bom]
+          on_get_initial_state(dialog) if dialog
+        rescue StandardError
+          nil
+        end
+
         def self.on_get_initial_state(dialog)
           project_id = stored_project_id
           free_edit_mode = Logimaxx::MaxxBOM::UI::Settings.stored_free_edit_mode
-          Logimaxx::MaxxBOM::UI.inject_json(dialog, "onInitialState", {
-            project_id: project_id,
-            free_edit_mode: free_edit_mode,
-            unit_map: Logimaxx::MaxxBOM::UI::Settings.stored_unit_map,
-            dev_mode: Logimaxx::MaxxBOM.dev_mode?,
-            api_adapter_name: Logimaxx::MaxxBOM::UI::Settings.stored_api_adapter_name
-          })
+          Logimaxx::MaxxBOM::UI.inject_json(dialog, "onInitialState", export_dialog_state(free_edit_mode).merge(
+            project_id: project_id
+          ))
         end
 
         def self.on_set_project_id(project_id)
@@ -67,20 +71,22 @@ module Logimaxx
         def self.on_get_plugin_settings(dialog)
           settings = Logimaxx::MaxxBOM::UI::Settings
           free_edit_mode = settings.stored_free_edit_mode
-          # Withhold connection details so browser-side code cannot call the API in free-edit mode.
-          import_api_url = free_edit_mode ? "" : settings.stored_import_api_url
-          offer_lines_api_url = free_edit_mode ? "" : settings.stored_offer_lines_api_url
-          import_api_key = free_edit_mode ? "" : settings.stored_import_api_key
-          import_api_profile = settings.stored_import_api_profile
-          Logimaxx::MaxxBOM::UI.inject_json(dialog, "onPluginSettings", {
-            import_api_url: import_api_url,
-            offer_lines_api_url: offer_lines_api_url,
-            import_api_key: import_api_key,
+          # Withhold scripts and connection values so the page cannot call out in free-edit mode.
+          Logimaxx::MaxxBOM::UI.inject_json(dialog, "onPluginSettings", export_dialog_state(free_edit_mode))
+        end
+
+        def self.export_dialog_state(free_edit_mode)
+          settings = Logimaxx::MaxxBOM::UI::Settings
+          flags = DataSources.catalog_flags
+          expose = !free_edit_mode
+          {
+            catalog: DataSources.slot(DataSources.catalog_id, expose_script: expose && flags[:price_mapped], concern: :catalog),
+            orders: DataSources.slot(DataSources.orders_id, expose_script: expose, concern: :orders),
             free_edit_mode: free_edit_mode,
-            import_api_profile: import_api_profile,
-            api_adapter_name: settings.stored_api_adapter_name,
-            unit_map: settings.stored_unit_map
-          })
+            unit_map: settings.stored_unit_map,
+            dev_mode: settings.debug_facility_visible?,
+            api_adapter_name: settings.stored_api_adapter_name
+          }
         end
 
         def self.on_set_exportable(dialog, definition_id, exportable)
@@ -120,7 +126,7 @@ module Logimaxx
             rows_without_rules: result[:rows_without_rules] || [],
             rows_geometry_only: result[:rows_geometry_only] || [],
             model_length_unit: result[:model_length_unit] || "m"
-          }
+          }.merge(catalog_export_state)
           Logimaxx::MaxxBOM::UI.inject_json(dialog, "onExportResult", payload)
         end
 
@@ -158,7 +164,7 @@ module Logimaxx
               piece_rows: result[:piece_rows] || [],
               piece_length_unit: result[:piece_length_unit] || "in",
               model_length_unit: result[:model_length_unit] || "m"
-            }
+            }.merge(catalog_export_state)
             Logimaxx::MaxxBOM::UI.inject_json(dialog, "onExportResult", payload)
             puts "[BOM Export] inject_json done"
           rescue StandardError => e
@@ -170,10 +176,21 @@ module Logimaxx
           end
         end
 
+        # Category stays on the quantity export unless the lookup data source has
+        # a category column and it is blank. Price is filled in the dialog from
+        # that data source when a price column is chosen.
+        def self.catalog_export_state
+          flags = Logimaxx::MaxxBOM::UI::DataSources.catalog_flags
+          {
+            catalog_category_mapped: flags[:category_mapped],
+            catalog_price_mapped: flags[:price_mapped]
+          }
+        end
+
         # A previous offer export. The dialog maps uom through the unit map and
         # fills the same offer review as an API load. Required columns match
         # the quantity CSV written by the dialog: code, quantity, uom. category
-        # is kept when the file has that column.
+        # is kept when the file has that column. price and total are ignored.
         def self.on_load_offer_csv(dialog)
           path = ::UI.openpanel("Open offer CSV", "", "CSV|*.csv||")
           return if path.nil? || path.to_s.strip.empty?
@@ -186,7 +203,7 @@ module Logimaxx
           end
 
           raw = File.read(path).sub(/\A\xEF\xBB\xBF/, "")
-          table = Logimaxx::MaxxBOM::UI::Attributes.parse_csv(raw)
+          table = Logimaxx::MaxxBOM::UI::Rules.parse_csv(raw)
           indexes = {}
           (table.shift || []).each_with_index do |header, index|
             key = header.to_s.strip.downcase
