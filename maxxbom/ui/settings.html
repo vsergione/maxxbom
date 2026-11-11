@@ -45,6 +45,27 @@
     .btn:disabled { opacity: 0.55; cursor: default; }
     .message { margin: 0 0 8px; font-size: 12px; color: #2d7d2d; }
     .message.error { color: #b00; }
+    .about-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+    .about-name { font-size: 20px; font-weight: 600; color: #222; }
+    .about-version { font-size: 12px; color: #777; }
+    .about-lead { margin: 0 0 16px; color: #444; }
+    .about-link { color: #2171b8; text-decoration: none; cursor: pointer; }
+    .about-link:hover { text-decoration: underline; }
+    .upsell { background: #fff; border: 1px solid #2171b8; border-left-width: 4px; border-radius: 4px; padding: 14px 16px; margin-bottom: 20px; }
+    .upsell h3 { margin: 0 0 6px; font-size: 15px; color: #1a5a94; }
+    .upsell p { margin: 0 0 10px; color: #333; }
+    .upsell ul { margin: 0 0 12px; padding-left: 18px; color: #333; }
+    .upsell li { margin-bottom: 4px; }
+    .upsell-status { font-size: 12px; color: #555; background: #f3f7fb; border-radius: 4px; padding: 6px 10px; margin-bottom: 12px; }
+    .upsell-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .plan-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #d0d4da; border-radius: 4px; }
+    .plan-table th, .plan-table td { text-align: left; font-size: 12px; padding: 7px 10px; border-bottom: 1px solid #e4e7eb; vertical-align: top; }
+    .plan-table tr:last-child td { border-bottom: none; }
+    .plan-table th { color: #666; font-weight: 600; background: #f7f8fa; }
+    .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
+    .tag-free { background: #e3f2e3; color: #2d6d2d; }
+    .tag-paid { background: #e3edf8; color: #1a5a94; }
+    .about-meta { font-size: 12px; color: #666; line-height: 1.7; }
   </style>
   <title>Plugin Settings</title>
 </head>
@@ -54,6 +75,7 @@
     <button type="button" class="tab active" id="tab-general" onclick="showTab('general')">General</button>
     <button type="button" class="tab" id="tab-datasources" onclick="showTab('datasources')">Data sources</button>
     <button type="button" class="tab" id="tab-plugins" onclick="showTab('plugins')">Plugins</button>
+    <button type="button" class="tab" id="tab-about" onclick="showTab('about')">About</button>
   </div>
   <p class="message" id="message" style="display: none;"></p>
 
@@ -128,6 +150,54 @@
       <p class="hint">Load installs a plugin so it can be used as a data source. It does not create one. Removing a plugin also removes its data sources. The CSV adapter stays installed.</p>
     </div>
   </div>
+
+  <div class="panel" id="panel-about" hidden>
+    <div class="about-head">
+      <span class="about-name">MaxxBOM</span>
+      <span class="about-version" id="about-version"></span>
+    </div>
+    <p class="about-lead">Measure SketchUp components with rules and export a bill of materials. Made by Logimaxx.</p>
+
+    <div class="upsell">
+      <h3>Send BOM lines straight into your ERP</h3>
+      <p>CSV works on its own. With an integration, MaxxBOM reads the product catalog from your system and writes quote lines back. Nobody has to copy them over.</p>
+      <ul>
+        <li>Product lookup and code checks against your live catalog</li>
+        <li>Load an existing offer by project ID and update its lines by code, unit and category</li>
+        <li>Ready-made adapters for MaxxOps and FileMaker, or one built for your own ERP</li>
+        <li>Set up, tested on your models and supported by the people who make MaxxBOM</li>
+      </ul>
+      <div class="upsell-status" id="about-integration-status"></div>
+      <div class="upsell-actions">
+        <button type="button" class="btn btn-save" onclick="openExternal('erp_quote')">Request an integration quote</button>
+        <a class="about-link" onclick="openExternal('product')">See how it works</a>
+      </div>
+      <p class="hint">Integration is priced per system. Tell us which system you use and what should reach it, and we will send a quote.</p>
+    </div>
+
+    <div class="step">
+      <div class="step-title">What is included</div>
+      <table class="plan-table">
+        <thead><tr><th>Feature</th><th>Availability</th></tr></thead>
+        <tbody>
+          <tr><td>Rules, scan, review, parts list</td><td><span class="tag tag-free">Free</span></td></tr>
+          <tr><td>CSV catalog and CSV export</td><td><span class="tag tag-free">Free</span></td></tr>
+          <tr><td>MaxxOps adapter (catalog, offers, orders)</td><td><span class="tag tag-paid">With integration</span></td></tr>
+          <tr><td>Adapter for your own ERP or database</td><td><span class="tag tag-paid">Built on request</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="step">
+      <div class="step-title">Contact</div>
+      <div class="about-meta">
+        Logimaxx Systems SRL · Timișoara<br>
+        <a class="about-link" onclick="openExternal('contact')">contact@logimaxx.ro</a> ·
+        <a class="about-link" onclick="openExternal('website')">logimaxx.ro</a><br>
+        <span id="about-sketchup"></span>
+      </div>
+    </div>
+  </div>
   </div>
 
   <div class="actions">
@@ -137,7 +207,30 @@
 
   <script src="unit_map.js"></script>
   <script>
-    var TABS = ["general", "datasources", "plugins"];
+    var TABS = ["general", "datasources", "plugins", "about"];
+
+    function openExternal(key) {
+      if (typeof sketchup !== "undefined" && sketchup.open_external) sketchup.open_external(key);
+    }
+
+    // Tells the user where they stand: CSV only, or which API plugins are already in use.
+    function renderAboutStatus() {
+      var el = document.getElementById("about-integration-status");
+      if (!el) return;
+      var apiNames = [];
+      (dsState.dataSources || []).forEach(function(source) {
+        var adapterId = source.adapter_id || "";
+        if (!adapterId || adapterId === "csv") return;
+        var adapter = (dsState.installed || []).filter(function(a) { return a && a.id === adapterId; })[0];
+        var name = adapter && adapter.name ? adapter.name : adapterId;
+        if (apiNames.indexOf(name) < 0) apiNames.push(name);
+      });
+      if (apiNames.length) {
+        el.textContent = "Connected through: " + apiNames.join(", ") + ". Need another system, or more than catalog and offers? Ask us.";
+      } else {
+        el.textContent = "This computer uses CSV only. Catalog and lines move by file.";
+      }
+    }
     var dsState = {
       dataSources: [],
       installed: [],
@@ -649,6 +742,7 @@
       renderInstalledAdapters();
       renderAvailableAdapters();
       renderLegacyHint();
+      renderAboutStatus();
     }
 
     function selectDataSource(id) {
@@ -852,6 +946,10 @@
       var devMode = data.dev_mode === true || data.dev_mode === "true";
       var debugStep = document.getElementById("debug-facility-step");
       if (debugStep) debugStep.hidden = !devMode;
+      var versionEl = document.getElementById("about-version");
+      if (versionEl) versionEl.textContent = data.version ? "Version " + data.version : "";
+      var suEl = document.getElementById("about-sketchup");
+      if (suEl) suEl.textContent = data.sketchup_version ? "SketchUp " + data.sketchup_version : "";
       var el = document.getElementById("debug_facility");
       if (el) el.checked = data.debug_facility !== false && data.debug_facility !== "false";
       el = document.getElementById("quotation_length_unit");

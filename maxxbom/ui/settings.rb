@@ -108,12 +108,36 @@ module Logimaxx
           dialog.add_action_callback('remove_data_source') { |*args| on_remove_data_source(dialog, args) }
           dialog.add_action_callback('pick_datasource_file') { |*args| on_pick_datasource_file(dialog, args) }
           dialog.add_action_callback('close_dialog') { dialog.close }
+          dialog.add_action_callback('open_external') { |*args| on_open_external(args) }
+        end
+
+        # About tab links. Only these open, in the system browser or mail client.
+        EXTERNAL_LINKS = {
+          "product" => "https://logimaxx.ro/ro/products/maxxbom",
+          "website" => "https://logimaxx.ro",
+          "contact" => "mailto:contact@logimaxx.ro",
+          "erp_quote" => "mailto:contact@logimaxx.ro?subject=MaxxBOM%20%E2%80%94%20ERP%20integration&body=" \
+                         "Hello%2C%0A%0AWe%20would%20like%20MaxxBOM%20connected%20to%20our%20system.%0A%0A" \
+                         "System%20%2F%20ERP%3A%20%0AWhat%20should%20it%20do%20(catalog%2C%20offers%2C%20orders)%3A%20%0A" \
+                         "Contact%20person%20and%20phone%3A%20%0A"
+        }.freeze
+
+        def self.on_open_external(args)
+          url = EXTERNAL_LINKS[callback_string(args)]
+          ::UI.openURL(url) if url
+          nil
+        end
+
+        def self.extension_version
+          defined?(Logimaxx::MaxxBOM::VERSION) ? Logimaxx::MaxxBOM::VERSION.to_s : ""
         end
 
         def self.on_get_settings(dialog)
           Logimaxx::MaxxBOM::UI.inject_json(dialog, "onSettingsLoaded", dialog_state.merge(
             free_edit_mode: stored_free_edit_mode,
             dev_mode: Logimaxx::MaxxBOM.dev_mode?,
+            version: extension_version,
+            sketchup_version: Sketchup.version.to_s,
             debug_facility: stored_debug_facility,
             unit_map: stored_unit_map,
             quotation_length_unit: stored_quotation_length_unit

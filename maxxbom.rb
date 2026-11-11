@@ -5,6 +5,7 @@ module Logimaxx
   module MaxxBOM
     # The only user-visible extension name. Menu, toolbar and dialog titles read it.
     DISPLAY_NAME = "MaxxBOM"
+    VERSION = "0.1.0"
 
     # SketchUp loads only this file from the Plugins folder. The sources live in
     # a sibling folder with the same basename:
@@ -36,7 +37,7 @@ module Logimaxx
     else
       ex = SketchupExtension.new(DISPLAY_NAME, MAIN)
       ex.description = "BOM exporter for SketchUp"
-      ex.version     = "0.1.0"
+      ex.version     = VERSION
       ex.creator     = "Logimaxx"
       Sketchup.register_extension(ex, true)
     end
